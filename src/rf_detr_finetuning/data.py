@@ -8,6 +8,7 @@ The module leverages the `supervision` package for dataset loading, splitting, a
 
 """
 
+import ast
 import logging
 import shutil
 import tempfile
@@ -63,7 +64,7 @@ def convert_yolo_to_coco(
     input_dir: str,
     output_dir: str,
     image_ext: tuple[str] | list[str] | str = (".jpg", ".jpeg", ".png"),
-    split_ratios: tuple[float, float, float] = (0.7, 0.2, 0.1),
+    split_ratios: tuple[float, float, float] | list[float] | str = (0.7, 0.2, 0.1),
     class_names: dict[int, str] | None = None,
     random_state: int | None = None,
 ) -> str:
@@ -77,7 +78,8 @@ def convert_yolo_to_coco(
         output_dir: Output directory for the prepared COCO dataset.
         image_ext: Deprecated parameter kept for backward compatibility. Image file detection is now
             handled automatically by the supervision package.
-        split_ratios: Tuple of (train, valid, test) ratios that sum to 1.0.
+        split_ratios: Tuple/list of (train, valid, test) ratios that sum to 1.0.
+            Strings like "0.8,0.1,0.1" or "(0.8, 0.1, 0.1)" are also accepted.
         class_names: Optional mapping from class id to class name for COCO categories.
             Required if 'data.yaml' does not exist in input_dir.
         random_state: Optional seed for reproducible dataset splitting.
@@ -93,9 +95,20 @@ def convert_yolo_to_coco(
     if isinstance(image_ext, str):
         image_ext = [image_ext]
 
+    if isinstance(split_ratios, str):
+        raw_value = split_ratios.strip()
+        try:
+            parsed = ast.literal_eval(raw_value)
+        except (ValueError, SyntaxError):
+            parsed = raw_value
+        if isinstance(parsed, (list, tuple)):
+            split_ratios = list(parsed)
+        else:
+            split_ratios = [float(v) for v in raw_value.replace("(", "").replace(")", "").split(",") if v.strip()]
+
     if split_ratios is not None:
         if len(split_ratios) not in (1, 2, 3):
-            raise ValueError("split_ratios must be None or a tuple of 1, 2, or 3 floats")
+            raise ValueError("split_ratios must be None or a tuple/list of 1, 2, or 3 floats")
         if len(split_ratios) == 3 and abs(sum(split_ratios) - 1.0) > 1e-9:
             raise ValueError("split_ratios must sum to 1.0")
 

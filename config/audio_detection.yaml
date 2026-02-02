@@ -1,0 +1,25 @@
+# Audio Event Detection Configuration for RF-DETR
+# Use with spectrograms generated from audio_to_coco converter
+
+# Training parameters
+epochs: 50
+lr: 1.0e-4
+batch_size: 8
+grad_accum_steps: 2
+
+# Learning rate schedule
+lr_drop: 40
+weight_decay: 1.0e-4
+
+# Model settings
+num_classes: null  # Auto-detected from dataset
+
+# Augmentation - spectrograms may need different augmentation than natural images
+# Consider that vertical flips would invert frequency (usually undesirable)
+# Horizontal flips reverse time (may or may not be desirable depending on event type)
+
+# Output directory
+output_dir: output/audio_detection
+
+# Evaluation frequency
+eval_every: 5

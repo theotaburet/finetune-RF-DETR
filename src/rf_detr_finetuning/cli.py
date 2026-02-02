@@ -9,6 +9,11 @@ import matplotlib.pyplot as plt
 import supervision as sv
 import yaml
 
+from rf_detr_finetuning.audio_to_coco import (
+    SpectrogramConfig,
+    convert_audio_to_coco,
+    parse_frequency_bins,
+)
 from rf_detr_finetuning.data import convert_yolo_to_coco
 from rf_detr_finetuning.finetune import MAP_MODEL_SIZE, finetune_model
 from rf_detr_finetuning.predict import prediction
@@ -23,20 +28,39 @@ def download_kaggle_dataset(name: str, dest: str = "data", force: bool = False) 
         force: Whether to force re-download if the dataset already exists.
 
     """
-    # Local import to keep dependency usage explicit and avoid import-time failures
-    import kagglehub
-
-    kagglehub.login()
-
     logging.info(f"Starting download of '{name}' into '{dest}'")
-    download_path = kagglehub.dataset_download(name, force_download=force)
-    logging.info(f"Download complete: {download_path}")
+
+    # Local import to keep dependency usage explicit and avoid import-time failures
+    try:
+        import kagglehub
+
+        kagglehub.login()
+
+        download_path = kagglehub.dataset_download(name, force_download=force)
+        logging.info(f"Download complete: {download_path}")
+
+        dest_path = Path(dest)
+        dataset_path = dest_path / name
+        dest_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(download_path, dataset_path)
+        logging.info(f"Dataset path: {dataset_path}")
+        return str(dataset_path)
+    except (ImportError, AttributeError) as exc:
+        logging.warning(
+            "kagglehub unavailable or incompatible; falling back to Kaggle API. Error: %s",
+            exc,
+        )
+
+    from kaggle.api.kaggle_api_extended import KaggleApi
+
+    api = KaggleApi()
+    api.authenticate()
 
     dest_path = Path(dest)
     dataset_path = dest_path / name
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.move(download_path, dataset_path)
-    logging.info(f"Dataaset path: {dataset_path}")
+    dataset_path.mkdir(parents=True, exist_ok=True)
+    api.dataset_download_files(name, path=str(dataset_path), unzip=True, force=force)
+    logging.info(f"Dataset path: {dataset_path}")
     return str(dataset_path)
 
 
@@ -62,7 +86,8 @@ def train(config_file: str, dataset: str, model_size: Literal[tuple(MAP_MODEL_SI
     plt.imshow(img)
     plt.title("Training Metrics")
     try:
-        plt.show()
+        if plt.get_backend().lower() != "agg":
+            plt.show()
     except Exception:
         logging.warning("GUI not available, skipping plot display.")
 
@@ -92,8 +117,79 @@ def predict(
         class_names=class_names,
     )
 
-    # Display the annotated image
+    # Display or save the annotated image depending on backend
+    if plt.get_backend().lower() == "agg":
+        output_path = Path("output/prediction.png")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        if visual.ndim == 3 and visual.shape[2] == 3:
+            visual_to_save = visual[:, :, ::-1]
+        else:
+            visual_to_save = visual
+        plt.imsave(str(output_path), visual_to_save)
+        logging.info(f"Prediction saved to {output_path}")
+        return
     sv.plot_image(visual)
+
+
+def audio_to_coco(
+    input_dir: str,
+    output_dir: str,
+    split_ratios: str = "0.7,0.2,0.1",
+    n_fft: int = 2048,
+    hop_length: int = 512,
+    n_mels: int = 128,
+    fmin: float = 0.0,
+    fmax: float | None = None,
+    target_sr: int | None = None,
+    frequency_bins: str | None = None,
+    auto_infer_bins: int | None = None,
+) -> str:
+    """Convert audio dataset with JSON metadata to COCO format spectrograms.
+
+    Args:
+        input_dir: Input directory containing audio files (.flac, .wav, etc.) with matching .json metadata.
+        output_dir: Output directory for the COCO-format dataset with spectrogram images.
+        split_ratios: Train,valid,test split ratios as comma-separated values (default: "0.7,0.2,0.1").
+        n_fft: FFT window size (default: 2048).
+        hop_length: Hop length for STFT (default: 512).
+        n_mels: Number of mel filterbanks (default: 128).
+        fmin: Minimum frequency for mel filterbank in Hz (default: 0.0).
+        fmax: Maximum frequency for mel filterbank in Hz (default: sr/2).
+        target_sr: Target sample rate for resampling (default: keep original).
+        frequency_bins: Frequency bins for category splitting, format: 'min1,max1,name1;min2,max2,name2'.
+            Example: '0,500,low;500,5000,mid;5000,22050,high' creates separate categories
+            for events in different frequency bands (useful for distinguishing ship noise from sonar).
+        auto_infer_bins: Automatically infer N frequency bins from the data distribution.
+            Overrides frequency_bins if set. Example: 3 for low/mid/high bins.
+
+    Returns:
+        Path to the output directory.
+
+    """
+    ratios = tuple(float(x) for x in split_ratios.split(","))
+
+    spec_config = SpectrogramConfig(
+        n_fft=n_fft,
+        hop_length=hop_length,
+        n_mels=n_mels,
+        fmin=fmin,
+        fmax=fmax,
+        target_sr=target_sr,
+    )
+
+    freq_bins = parse_frequency_bins(frequency_bins)
+
+    result = convert_audio_to_coco(
+        input_dir=input_dir,
+        output_dir=output_dir,
+        spec_config=spec_config,
+        split_ratios=ratios,
+        frequency_bins=freq_bins,
+        auto_infer_bins=bool(auto_infer_bins) if auto_infer_bins else False,
+    )
+
+    logging.info(f"Audio dataset converted to COCO format at: {result}")
+    return str(result)
 
 
 commands = {
@@ -102,6 +198,7 @@ commands = {
     },
     "convert": {
         "yolo-to-coco": convert_yolo_to_coco,
+        "audio-to-coco": audio_to_coco,
     },
     "train": train,
     "predict": predict,

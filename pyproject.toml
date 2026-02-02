@@ -28,6 +28,9 @@ classifiers = [
 ]
 dynamic = [ "version" ]
 dependencies = [
+  "ezakodio",
+  "kaggle>=1.7.4.5",
+  "kagglehub>=0.4.2",
   "rfdetr",
   "supervision",
 ]
@@ -51,6 +54,9 @@ version = { attr = "rf_detr_finetuning.__version__" }
 
 [tool.setuptools.packages.find]
 where = [ "src" ]
+
+[tool.uv.sources]
+ezakodio = { git = "https://github.com/ezako/ezakodio.git" }
 
 [tool.ruff]
 target-version = "py310"

@@ -99,17 +99,19 @@ Follow these steps to get up and running with RF-DETR fine-tuning in minutes. Th
 Use the local CLI to download datasets. For example, to download the CCTV Weapon Dataset from Kaggle:
 
 ```bash
-python -m rf_detr_finetuning download kaggle-dataset --name dataset/name --dest data
+uv run -m rf_detr_finetuning download kaggle-dataset --name simuletic/cctv-weapon-dataset --dest data
 ```
 
-If authentication fails, you'll be prompted for your Kaggle username and API key.
+If authentication fails, set up your Kaggle API credentials in ~/.config/kaggle/kaggle.json or via the
+KAGGLE_USERNAME/KAGGLE_KEY environment variables, then re-run the command. Make sure you have accepted any
+dataset rules on Kaggle to avoid a 403 error.
 
 ### Dataset Conversion
 
 To convert a YOLO dataset to COCO format with train/valid/test splits:
 
 ```bash
-python -m rf_detr_finetuning convert yolo-to-coco \
+uv run -m rf_detr_finetuning convert yolo-to-coco \
   --input_dir path/to/yolo/dataset \
   --output_dir path/to/output \
   --split_ratios 0.8 0.1 0.1 \
@@ -121,7 +123,7 @@ python -m rf_detr_finetuning convert yolo-to-coco \
 To train the model on the prepared dataset:
 
 ```bash
-python -m rf_detr_finetuning train \
+uv run -m rf_detr_finetuning train \
   --config config/sample_config.yaml \
   --dataset data/my-dataset_coco
 ```
@@ -135,13 +137,14 @@ The device (GPU/CPU) is automatically detected and set.
 Once training is complete, run inference on new images using your trained model:
 
 ```bash
-python -m rf_detr_finetuning predict \
-  --model_path output/best_checkpoint.pth \
+uv run -m rf_detr_finetuning predict \
+  --model_path output/checkpoint_best_total.pth \
   --image_path path/to/test/image.jpg \
   --confidence 0.5
 ```
 
-This will display the detected objects with bounding boxes and confidence scores.
+This will display the detected objects with bounding boxes and confidence scores. In headless environments,
+the annotated image is saved to output/prediction.png.
 
 ## Real Use Case 🎥
 
