@@ -32,6 +32,7 @@ dependencies = [
   "kaggle>=1.7.4.5",
   "kagglehub>=0.4.2",
   "rfdetr",
+  "rich>=13",
   "supervision",
 ]
 

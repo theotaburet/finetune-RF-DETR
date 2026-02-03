@@ -17,6 +17,7 @@ Uses ezakodio for all audio processing (loading, spectrogram generation, etc.)
 
 from __future__ import annotations
 
+import gc
 import json
 import logging
 from collections.abc import Iterator
@@ -32,13 +33,27 @@ from ezakodio import hz_to_mel, mel_to_hz
 from ezakodio.dsp import mel_spectrogram
 from ezakodio.io import load_audio
 from PIL import Image
+from rich.console import Console
+from rich.logging import RichHandler
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeRemainingColumn,
+)
 
+# Rich console for output
+console = Console()
+
+# Configure logger with Rich
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(message)s",
+    handlers=[RichHandler(console=console, rich_tracebacks=True)],
+)
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# Data Models
-# =============================================================================
 
 
 @dataclass
@@ -193,11 +208,6 @@ class BoundingBox:
         }
 
 
-# =============================================================================
-# Frequency-to-Pixel Conversion
-# =============================================================================
-
-
 class FrequencyMapper:
     """Maps frequencies (Hz) to spectrogram pixel positions.
 
@@ -319,11 +329,6 @@ class TimeMapper:
         return pixel * self.ms_per_frame
 
 
-# =============================================================================
-# Spectrogram Generation
-# =============================================================================
-
-
 def spectrogram_to_image(
     spectrogram: np.ndarray,
     normalize: bool = True,
@@ -355,11 +360,6 @@ def spectrogram_to_image(
     img = Image.fromarray(spec, mode="L").convert("RGB")
 
     return img
-
-
-# =============================================================================
-# Bbox Coordinate Decoder
-# =============================================================================
 
 
 @dataclass
@@ -541,11 +541,6 @@ def infer_frequency_bins_from_data(
     return frequency_bins
 
 
-# =============================================================================
-# Dataset Processing
-# =============================================================================
-
-
 @dataclass
 class CategoryRegistry:
     """Registry for managing category mappings.
@@ -645,7 +640,7 @@ def process_audio_file(
     metadata: AudioMetadata,
     spec_config: SpectrogramConfig,
     category_registry: CategoryRegistry,
-) -> tuple[Image.Image, BoundingBox, dict[str, Any]]:
+) -> tuple[Image.Image, BoundingBox, dict[str, Any]] | None:
     """Process a single audio file into spectrogram + bounding box.
 
     Uses ezakodio for audio loading and spectrogram computation.
@@ -662,118 +657,191 @@ def process_audio_file(
         category_registry: Category registry for label management.
 
     Returns:
-        Tuple of (spectrogram_image, bounding_box, extra_metadata).
+        Tuple of (spectrogram_image, bounding_box, extra_metadata), or None if failed.
 
     """
-    # Load audio using ezakodio
-    target_sr = spec_config.target_sr
-    if target_sr is None:
-        target_sr = metadata.sample_rate
-        if not spec_config.normalize_frequency:
-            logger.warning(
-                f"target_sr=None and normalize_frequency=False! "
-                f"Using original SR={metadata.sample_rate} Hz. "
-                "Mixed SRs will cause issues. Set target_sr or use normalize_frequency=True."
-            )
+    audio_tensor = None
+    mel_spec_tensor = None
+    mel_spec = None
 
-    audio_tensor, sr = load_audio(
-        str(audio_path),
-        sample_rate=target_sr,
-        mono=True,
-        device="cpu",
-    )
+    try:
+        # Load audio using ezakodio
+        target_sr = spec_config.target_sr
+        if target_sr is None:
+            target_sr = metadata.sample_rate
+            if not spec_config.normalize_frequency:
+                logger.warning(
+                    f"target_sr=None and normalize_frequency=False! "
+                    f"Using original SR={metadata.sample_rate} Hz. "
+                    "Mixed SRs will cause issues. Set target_sr or use normalize_frequency=True."
+                )
 
-    # Compute mel spectrogram using ezakodio
-    fmax = spec_config.fmax if spec_config.fmax else sr / 2
-    mel_spec_tensor = mel_spectrogram(
-        audio_tensor,
-        sample_rate=sr,
-        n_mels=spec_config.n_mels,
-        n_fft=spec_config.n_fft,
-        hop_length=spec_config.hop_length,
-        f_min=spec_config.fmin,
-        f_max=fmax,
-        power=spec_config.power,
-        log_scale=spec_config.log_scale,
-        device="cpu",
-    )
+        audio_tensor, sr = load_audio(
+            str(audio_path),
+            sample_rate=target_sr,
+            mono=True,
+            device="cpu",
+        )
 
-    # Convert to numpy, remove batch dimension if present
-    mel_spec = mel_spec_tensor.cpu().numpy()
-    if mel_spec.ndim == 3:
-        mel_spec = mel_spec[0]
+        # Compute mel spectrogram using ezakodio
+        fmax = spec_config.fmax if spec_config.fmax else sr / 2
+        mel_spec_tensor = mel_spectrogram(
+            audio_tensor,
+            sample_rate=sr,
+            n_mels=spec_config.n_mels,
+            n_fft=spec_config.n_fft,
+            hop_length=spec_config.hop_length,
+            f_min=spec_config.fmin,
+            f_max=fmax,
+            power=spec_config.power,
+            log_scale=spec_config.log_scale,
+            device="cpu",
+        )
 
-    # Convert to image
-    img = spectrogram_to_image(mel_spec, normalize=spec_config.normalize)
+        # Convert to numpy, remove batch dimension if present
+        mel_spec = mel_spec_tensor.cpu().numpy()
+        if mel_spec.ndim == 3:
+            mel_spec = mel_spec[0]
 
-    # Get spectrogram dimensions
-    n_mels, n_frames = mel_spec.shape
+        # Convert to image
+        img = spectrogram_to_image(mel_spec, normalize=spec_config.normalize)
 
-    # Create mappers
-    freq_mapper = FrequencyMapper(
-        n_mels, spec_config.fmin, fmax, sr, normalize_frequency=spec_config.normalize_frequency
-    )
-    time_mapper = TimeMapper(metadata.duration, n_frames, sr, spec_config.hop_length)
+        # Get spectrogram dimensions
+        n_mels, n_frames = mel_spec.shape
 
-    # For whole-file annotations, the bbox covers the entire spectrogram
-    # You can extend this for segment-level annotations
-    if metadata.hz_min == 0 and metadata.hz_max >= fmax * 0.9:
-        # Full-band event - cover entire height
-        y_top = 0
-        y_bottom = n_mels
-    else:
-        # Frequency-specific event
-        y_top = freq_mapper.hz_to_pixel(metadata.hz_max)  # High freq = top
-        y_bottom = freq_mapper.hz_to_pixel(metadata.hz_min)  # Low freq = bottom
+        # Create mappers
+        freq_mapper = FrequencyMapper(
+            n_mels, spec_config.fmin, fmax, sr, normalize_frequency=spec_config.normalize_frequency
+        )
+        time_mapper = TimeMapper(metadata.duration, n_frames, sr, spec_config.hop_length)
 
-    # Time bounds (full duration for single-file annotation)
-    x_left = 0
-    x_right = n_frames
+        # For whole-file annotations, the bbox covers the entire spectrogram
+        # You can extend this for segment-level annotations
+        if metadata.hz_min == 0 and metadata.hz_max >= fmax * 0.9:
+            # Full-band event - cover entire height
+            y_top = 0
+            y_bottom = n_mels
+        else:
+            # Frequency-specific event
+            y_top = freq_mapper.hz_to_pixel(metadata.hz_max)  # High freq = top
+            y_bottom = freq_mapper.hz_to_pixel(metadata.hz_min)  # Low freq = bottom
 
-    # Get category with frequency awareness
-    cat_id, cat_name = category_registry.get_category_with_frequency(
-        metadata.annotation,
-        metadata.hz_min,
-        metadata.hz_max,
-    )
+        # Time bounds (full duration for single-file annotation)
+        x_left = 0
+        x_right = n_frames
 
-    bbox = BoundingBox(
-        x=float(x_left),
-        y=float(y_top),
-        width=float(x_right - x_left),
-        height=float(y_bottom - y_top),
-        category_id=cat_id,
-        category_name=cat_name,
-        hz_min=metadata.hz_min,
-        hz_max=metadata.hz_max,
-        time_start_ms=0.0,
-        time_end_ms=metadata.duration,
-    )
+        # Get category with frequency awareness
+        cat_id, cat_name = category_registry.get_category_with_frequency(
+            metadata.annotation,
+            metadata.hz_min,
+            metadata.hz_max,
+        )
 
-    # Decode bbox coordinates back to Hz/time for verification and extra features
-    freq_info = decode_bbox_to_frequency(bbox, freq_mapper, time_mapper)
+        bbox = BoundingBox(
+            x=float(x_left),
+            y=float(y_top),
+            width=float(x_right - x_left),
+            height=float(y_bottom - y_top),
+            category_id=cat_id,
+            category_name=cat_name,
+            hz_min=metadata.hz_min,
+            hz_max=metadata.hz_max,
+            time_start_ms=0.0,
+            time_end_ms=metadata.duration,
+        )
 
-    extra_metadata = {
-        "original_sr": metadata.sample_rate,
-        "used_sr": sr,
-        "sample_rate": sr,  # Current SR for this spectrogram
-        "nyquist_hz": sr / 2,  # Maximum frequency
-        "n_frames": n_frames,
-        "n_mels": n_mels,
-        "label_hierarchy": metadata.label_hierarchy,
-        "confidence": metadata.confidence,
-        "uuid": metadata.uuid,
-        "normalize_frequency": spec_config.normalize_frequency,
-        # Add decoded frequency info for use in model training
-        "frequency_info": freq_info.to_dict(),
-    }
+        # Decode bbox coordinates back to Hz/time for verification and extra features
+        freq_info = decode_bbox_to_frequency(bbox, freq_mapper, time_mapper)
 
-    return img, bbox, extra_metadata
+        extra_metadata = {
+            "original_sr": metadata.sample_rate,
+            "used_sr": sr,
+            "sample_rate": sr,  # Current SR for this spectrogram
+            "nyquist_hz": sr / 2,  # Maximum frequency
+            "n_frames": n_frames,
+            "n_mels": n_mels,
+            "label_hierarchy": metadata.label_hierarchy,
+            "confidence": metadata.confidence,
+            "uuid": metadata.uuid,
+            "normalize_frequency": spec_config.normalize_frequency,
+            # Add decoded frequency info for use in model training
+            "frequency_info": freq_info.to_dict(),
+        }
+
+        return img, bbox, extra_metadata
+
+    except FileNotFoundError:
+        logger.error(f"Audio file not found: {audio_path}")
+        return None
+    except json.JSONDecodeError as e:
+        logger.error(f"Invalid JSON metadata for {audio_path}: {e}")
+        return None
+    except RuntimeError as e:
+        if "out of memory" in str(e).lower():
+            logger.error(f"OOM processing {audio_path}. Try --target-sr to downsample.")
+        else:
+            logger.error(f"Runtime error processing {audio_path}: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Failed to process {audio_path}: {e}")
+        return None
+    finally:
+        # Memory cleanup - only delete if they exist
+        if audio_tensor is not None:
+            del audio_tensor
+        if mel_spec_tensor is not None:
+            del mel_spec_tensor
+        if mel_spec is not None:
+            del mel_spec
+        gc.collect()
 
 
-# =============================================================================
-# COCO Dataset Builder
-# =============================================================================
+def validate_coco_dataset(coco_data: dict[str, Any]) -> tuple[bool, list[str]]:
+    """Validate COCO dataset structure and content.
+
+    Args:
+        coco_data: COCO dataset dictionary.
+
+    Returns:
+        Tuple of (is_valid, list of error messages).
+
+    """
+    errors: list[str] = []
+
+    # Check required keys
+    required_keys = {"images", "annotations", "categories"}
+    missing = required_keys - set(coco_data.keys())
+    if missing:
+        errors.append(f"Missing required keys: {missing}")
+        return False, errors
+
+    # Build lookup tables
+    image_ids = {img["id"]: img for img in coco_data["images"]}
+    category_ids = {cat["id"] for cat in coco_data["categories"]}
+
+    # Validate annotations
+    for ann in coco_data["annotations"]:
+        # Check image reference
+        if ann["image_id"] not in image_ids:
+            errors.append(f"Annotation {ann['id']} references missing image {ann['image_id']}")
+            continue
+
+        img = image_ids[ann["image_id"]]
+        x, y, w, h = ann["bbox"]
+
+        # Check bbox bounds
+        if x < 0 or y < 0:
+            errors.append(f"Annotation {ann['id']} has negative bbox coordinates")
+        if x + w > img["width"]:
+            errors.append(f"Annotation {ann['id']} bbox exceeds image width")
+        if y + h > img["height"]:
+            errors.append(f"Annotation {ann['id']} bbox exceeds image height")
+
+        # Check category reference
+        if ann["category_id"] not in category_ids:
+            errors.append(f"Annotation {ann['id']} references missing category {ann['category_id']}")
+
+    return len(errors) == 0, errors
 
 
 @dataclass
@@ -868,11 +936,6 @@ class COCODataset:
         logger.info(f"Saved COCO dataset to {output_path}")
 
 
-# =============================================================================
-# Main Conversion Pipeline
-# =============================================================================
-
-
 def convert_audio_to_coco(
     input_dir: str | Path,
     output_dir: str | Path,
@@ -961,28 +1024,61 @@ def convert_audio_to_coco(
         "test": audio_files[n_train + n_valid :],
     }
 
+    # Stats tracking
+    stats = {"processed": 0, "failed": 0, "skipped": 0}
+
+    # Rich progress bar setup
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+        console=console,
+    )
+
     # Process each split
-    for split_name, split_files in splits.items():
-        if not split_files:
-            continue
+    with progress:
+        for split_name, split_files in splits.items():
+            if not split_files:
+                continue
 
-        split_dir = output_dir / split_name
-        split_dir.mkdir(parents=True, exist_ok=True)
+            split_dir = output_dir / split_name
+            split_dir.mkdir(parents=True, exist_ok=True)
 
-        coco_dataset = COCODataset()
+            coco_dataset = COCODataset()
+            task = progress.add_task(f"[cyan]{split_name}", total=len(split_files))
 
-        for audio_path, json_path in split_files:
-            try:
+            for audio_path, json_path in split_files:
                 # Load metadata
-                metadata = AudioMetadata.from_json(json_path)
+                try:
+                    metadata = AudioMetadata.from_json(json_path)
+                except Exception as e:
+                    logger.error(f"Failed to load metadata {json_path}: {e}")
+                    stats["failed"] += 1
+                    progress.advance(task)
+                    continue
 
                 # Process audio to spectrogram
-                img, bbox, extra = process_audio_file(audio_path, metadata, spec_config, category_registry)
+                result = process_audio_file(audio_path, metadata, spec_config, category_registry)
+
+                if result is None:
+                    stats["failed"] += 1
+                    progress.advance(task)
+                    continue
+
+                img, bbox, extra = result
 
                 # Save spectrogram image
-                img_filename = f"{metadata.uuid}.png"
-                img_path = split_dir / img_filename
-                img.save(img_path)
+                try:
+                    img_filename = f"{metadata.uuid}.png"
+                    img_path = split_dir / img_filename
+                    img.save(img_path)
+                except Exception as e:
+                    logger.error(f"Failed to save image {img_path}: {e}")
+                    stats["failed"] += 1
+                    progress.advance(task)
+                    continue
 
                 # Add to COCO dataset
                 image_id = coco_dataset.add_image(
@@ -993,24 +1089,30 @@ def convert_audio_to_coco(
                 )
                 coco_dataset.add_annotation(bbox, image_id)
 
-                logger.debug(f"Processed {audio_path.name} -> {img_filename}")
+                stats["processed"] += 1
+                progress.advance(task)
 
-            except Exception as e:
-                logger.error(f"Error processing {audio_path}: {e}")
-                continue
+            # Finalize and save
+            coco_dataset.set_categories(category_registry)
 
-        # Finalize and save
-        coco_dataset.set_categories(category_registry)
-        coco_dataset.save(split_dir / "_annotations.coco.json")
+            # Validate before saving
+            coco_data = coco_dataset.to_dict()
+            is_valid, errors = validate_coco_dataset(coco_data)
+            if not is_valid:
+                for err in errors[:10]:  # Show first 10 errors
+                    logger.warning(f"Validation: {err}")
+                if len(errors) > 10:
+                    logger.warning(f"... and {len(errors) - 10} more errors")
 
-        logger.info(f"{split_name}: {len(split_files)} samples -> {split_dir}")
+            coco_dataset.save(split_dir / "_annotations.coco.json")
+
+    # Print summary
+    console.print("\n[green]✓ Conversion complete[/green]")
+    console.print(f"  Processed: {stats['processed']}")
+    console.print(f"  Failed: {stats['failed']}")
+    console.print(f"  Output: {output_dir}")
 
     return output_dir
-
-
-# =============================================================================
-# CLI Integration
-# =============================================================================
 
 
 def add_audio_cli_args(parser) -> None:
