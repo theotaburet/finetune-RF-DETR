@@ -31,6 +31,7 @@ dependencies = [
   "ezakodio",
   "kaggle>=1.7.4.5",
   "kagglehub>=0.4.2",
+  "pyyaml>=6",
   "rfdetr",
   "rich>=13",
   "supervision",
@@ -92,6 +93,10 @@ wrap-descriptions = 120
 blank = true
 
 [tool.pytest.ini_options]
-color = "yes"
 testpaths = [ "tests" ]
-addopts = "-v --tb=short"
+addopts = "-v --tb=short --color=yes"
+markers = [
+  "real_files: uses real_audio_path and real_json_path from pytest config",
+]
+real_audio_path = "data_tests/ddd4a606-c07c-4c48-879e-e93d729d79c4.flac"
+real_json_path = "data_tests/ddd4a606-c07c-4c48-879e-e93d729d79c4.json"

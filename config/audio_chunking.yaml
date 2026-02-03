@@ -1,0 +1,67 @@
+# Audio Chunking Configuration
+# Controls how audio files are split into fixed-size spectrograms for RF-DETR
+
+# FFT Configuration (time-based for consistent resolution across sample rates)
+fft:
+  # FFT window duration in milliseconds
+  # Larger = better frequency resolution, worse time resolution
+  # Recommended: 20-50ms for general audio, 10-25ms for transients
+  fft_ms: 20.0
+
+  # Hop duration in milliseconds (time per spectrogram pixel)
+  # Smaller = finer time resolution, larger spectrograms
+  # Recommended: 5-15ms
+  hop_ms: 10.0
+
+  # Number of mel bands (spectrogram height before resize)
+  # More bands = finer frequency resolution
+  # Recommended: 64-256
+  n_mels: 128 # TODO we might try 256 later for better freq resolution
+
+# Chunking Configuration
+chunking:
+  # Target image size (pixels) - width will match height for square images
+  # RF-DETR works well with 640x640
+  # window_duration_ms is auto-calculated as: target_size * hop_ms
+  target_size: 640
+
+  # Overlap between consecutive chunks as a ratio (0.0-1.0)
+  # Higher overlap = less chance of cutting events, but more chunks
+  # Recommended: 0.2-0.5 (20-50% of window_duration_ms)
+  # Example: 0.2 = 20% overlap = 1280ms with 6400ms window
+  overlap_ratio: 0.2
+
+  # Minimum overlap ratio for event to be included in chunk
+  # Events with less overlap are excluded from that chunk
+  # 0.3 = event must have at least 30% in the chunk
+  min_overlap_with_event_ratio: 0.3
+
+  # Padding mode for audio shorter than window
+  # - 'zero': Pad with silence
+  # - 'repeat': Loop the audio
+  # - 'reflect': Mirror the audio at boundaries
+  padding_mode: zero
+
+  # Minimum ratio of actual audio content in a chunk (0.0-1.0)
+  # Chunks with less content are dropped to avoid useless black padding
+  # Example: 0.5 = chunks need at least 50% real audio (drops short end chunks)
+  # Set to 0.0 to keep all chunks regardless of padding
+  min_chunk_content_ratio: 0.5
+
+  # Randomize padding position for short audio (data augmentation)
+  # When audio is shorter than window_duration_ms and needs padding,
+  # randomize where it sits in the padded chunk (left/center/right)
+  # Useful for very short sounds like gunshots (50ms) to add robustness
+  # true = random position, false = always centered
+  random_pad_position: true
+
+# Spectrogram settings
+spectrogram:
+  # Frequency scale: 'mel', 'linear', 'log'
+  # mel is best for most audio ML tasks
+  freq_scale: mel
+
+  # Frequency range (Hz)
+  # null = use full range (0 to Nyquist)
+  fmin: 0.0
+  fmax: null

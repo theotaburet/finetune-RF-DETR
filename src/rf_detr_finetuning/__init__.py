@@ -7,6 +7,15 @@ This package provides a modular pipeline for fine-tuning RF-DETR models.
 __version__ = "0.1.0"
 
 
+from rf_detr_finetuning.audio_chunking import (
+    AudioChunk,
+    AudioChunker,
+    ChunkBbox,
+    ChunkConfig,
+    TimeBasedFFTConfig,
+    draw_bboxes_on_spectrogram,
+    load_chunking_config_from_yaml,
+)
 from rf_detr_finetuning.audio_to_coco import (
     AudioMetadata,
     BboxFrequencyInfo,
@@ -39,6 +48,14 @@ __all__ = [
     "TimeMapper",
     "decode_bbox_to_frequency",
     "infer_frequency_bins_from_data",
+    # Audio chunking
+    "AudioChunk",
+    "AudioChunker",
+    "ChunkBbox",
+    "ChunkConfig",
+    "TimeBasedFFTConfig",
+    "draw_bboxes_on_spectrogram",
+    "load_chunking_config_from_yaml",
     # Training
     "finetune_model",
     "prediction",

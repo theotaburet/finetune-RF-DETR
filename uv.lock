@@ -2418,6 +2418,7 @@ dependencies = [
     { name = "kaggle", version = "1.7.4.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "kaggle", version = "1.8.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "kagglehub" },
+    { name = "pyyaml" },
     { name = "rfdetr" },
     { name = "rich" },
     { name = "supervision" },
@@ -2444,8 +2445,9 @@ requires-dist = [
     { name = "kagglehub", marker = "extra == 'data'" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
+    { name = "pyyaml", specifier = ">=6.0" },
     { name = "rfdetr" },
-    { name = "rich", specifier = ">=13.0.0" },
+    { name = "rich", specifier = ">=13" },
     { name = "supervision" },
 ]
 

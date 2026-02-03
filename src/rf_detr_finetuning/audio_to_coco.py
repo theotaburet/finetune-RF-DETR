@@ -731,8 +731,12 @@ def process_audio_file(
         x_right = n_frames
 
         # Get category with frequency awareness
+        label = metadata.annotation
+        if metadata.label_hierarchy:
+            label = metadata.label_hierarchy.split(">")[-1].strip()
+
         cat_id, cat_name = category_registry.get_category_with_frequency(
-            metadata.annotation,
+            label,
             metadata.hz_min,
             metadata.hz_max,
         )

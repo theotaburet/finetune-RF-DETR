@@ -9,6 +9,13 @@ import matplotlib.pyplot as plt
 import supervision as sv
 import yaml
 
+from rf_detr_finetuning.audio_chunking import (
+    AudioChunker,
+    ChunkConfig,
+    TimeBasedFFTConfig,
+    draw_bboxes_on_spectrogram,
+    load_chunking_config_from_yaml,
+)
 from rf_detr_finetuning.audio_to_coco import (
     SpectrogramConfig,
     convert_audio_to_coco,
@@ -192,6 +199,205 @@ def audio_to_coco(
     return str(result)
 
 
+def chunk_audio(
+    input_dir: str,
+    output_dir: str,
+    config_file: str | None = None,
+    window_duration_ms: float = 5000.0,
+    overlap_ms: float = 1000.0,
+    target_width: int = 640,
+    target_height: int = 640,
+    fft_ms: float = 25.0,
+    hop_ms: float = 10.0,
+    n_mels: int = 128,
+    padding_mode: str = "zero",
+    min_overlap_ratio: float = 0.3,
+    draw_bboxes: bool = False,
+    debug_output_dir: str | None = None,
+) -> str:
+    """Chunk audio files into fixed-size spectrograms with aligned bboxes.
+
+    This command processes audio files with JSON metadata (containing bbox annotations)
+    and creates fixed-size spectrogram chunks suitable for RF-DETR training.
+    Each chunk has bboxes transformed to chunk-relative coordinates.
+
+    Args:
+        input_dir: Input directory containing audio files with matching .json metadata.
+        output_dir: Output directory for chunked spectrograms and COCO annotations.
+        config_file: Path to YAML config file. Overrides other CLI arguments if provided.
+        window_duration_ms: Duration of each chunk in milliseconds (default: 5000).
+        overlap_ms: Overlap between consecutive chunks in milliseconds (default: 1000).
+        target_width: Target width for output spectrograms (default: 640).
+        target_height: Target height for output spectrograms (default: 640).
+        fft_ms: FFT window duration in milliseconds (default: 25.0).
+        hop_ms: Hop duration in milliseconds (default: 10.0).
+        n_mels: Number of mel filterbanks (default: 128).
+        padding_mode: Padding mode for short audio: 'zero', 'repeat', or 'reflect' (default: 'zero').
+        min_overlap_ratio: Minimum overlap ratio with event bbox to include in chunk (default: 0.3).
+        draw_bboxes: Whether to draw debug images with bboxes overlaid (default: False).
+        debug_output_dir: Output directory for debug bbox images (default: output_dir/debug).
+
+    Returns:
+        Path to the output directory.
+
+    """
+    from rich.console import Console
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+
+    console = Console()
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+
+    # Load config from YAML or use CLI arguments
+    if config_file:
+        console.print(f"[cyan]Loading config from:[/cyan] {config_file}")
+        fft_config, chunk_config = load_chunking_config_from_yaml(config_file)
+    else:
+        fft_config = TimeBasedFFTConfig(
+            fft_ms=fft_ms,
+            hop_ms=hop_ms,
+            n_mels=n_mels,
+        )
+        chunk_config = ChunkConfig(
+            window_duration_ms=window_duration_ms,
+            overlap_ms=overlap_ms,
+            target_width=target_width,
+            target_height=target_height,
+            padding_mode=padding_mode,
+            min_overlap_with_event_ratio=min_overlap_ratio,
+        )
+
+    chunker = AudioChunker(fft_config=fft_config, chunk_config=chunk_config)
+
+    # Find audio files
+    input_path = Path(input_dir)
+    audio_extensions = {".flac", ".wav", ".mp3", ".ogg", ".m4a"}
+    audio_files = [f for f in input_path.rglob("*") if f.suffix.lower() in audio_extensions]
+
+    if not audio_files:
+        console.print(f"[red]No audio files found in:[/red] {input_dir}")
+        return str(output_path)
+
+    console.print(f"[green]Found {len(audio_files)} audio files[/green]")
+
+    # Prepare COCO dataset structure
+    coco_images: list[dict] = []
+    coco_annotations: list[dict] = []
+    categories_seen: dict[str, int] = {}
+    annotation_id = 1
+    image_id = 1
+
+    debug_dir = Path(debug_output_dir) if debug_output_dir else output_path / "debug"
+    if draw_bboxes:
+        debug_dir.mkdir(parents=True, exist_ok=True)
+
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]Processing audio files...", total=len(audio_files))
+
+        for audio_file in audio_files:
+            progress.update(task, description=f"[cyan]Chunking: {audio_file.name}")
+
+            try:
+                chunks = chunker.chunk_audio_file(audio_file)
+            except Exception as e:
+                console.print(f"[yellow]Warning: Failed to process {audio_file}: {e}[/yellow]")
+                progress.advance(task)
+                continue
+
+            for chunk in chunks:
+                # Save spectrogram image
+                chunk_filename = f"{audio_file.stem}_chunk{chunk.chunk_index:04d}.png"
+                chunk_path = output_path / "images" / chunk_filename
+                chunk_path.parent.mkdir(parents=True, exist_ok=True)
+
+                # Convert spectrogram to image (normalize to 0-255)
+                spec_min = chunk.spectrogram.min()
+                spec_max = chunk.spectrogram.max()
+                if spec_max > spec_min:
+                    normalized = (chunk.spectrogram - spec_min) / (spec_max - spec_min)
+                else:
+                    normalized = chunk.spectrogram - spec_min
+                img_array = (normalized * 255).astype("uint8")
+
+                # Save using PIL
+                from PIL import Image
+
+                img = Image.fromarray(img_array)
+                if img.mode != "RGB":
+                    img = img.convert("RGB")
+                img.save(chunk_path)
+
+                # Add to COCO images
+                coco_images.append(
+                    {
+                        "id": image_id,
+                        "file_name": f"images/{chunk_filename}",
+                        "width": chunk.spectrogram.shape[1],
+                        "height": chunk.spectrogram.shape[0],
+                    }
+                )
+
+                # Add bboxes as annotations
+                for bbox in chunk.bboxes:
+                    # Get or create category
+                    cat_name = bbox.category
+                    if cat_name not in categories_seen:
+                        categories_seen[cat_name] = len(categories_seen) + 1
+                    cat_id = categories_seen[cat_name]
+
+                    coco_annotations.append(
+                        {
+                            "id": annotation_id,
+                            "image_id": image_id,
+                            "category_id": cat_id,
+                            "bbox": bbox.to_coco_bbox(),
+                            "area": bbox.to_coco_bbox()[2] * bbox.to_coco_bbox()[3],
+                            "iscrowd": 0,
+                        }
+                    )
+                    annotation_id += 1
+
+                # Draw debug images if requested
+                if draw_bboxes and chunk.bboxes:
+                    debug_path = debug_dir / f"{audio_file.stem}_chunk{chunk.chunk_index:04d}_debug.png"
+                    debug_img = draw_bboxes_on_spectrogram(chunk.spectrogram, chunk.bboxes)
+                    Image.fromarray(debug_img).save(debug_path)
+
+                image_id += 1
+
+            progress.advance(task)
+
+    # Build categories list
+    coco_categories = [
+        {"id": cat_id, "name": cat_name} for cat_name, cat_id in sorted(categories_seen.items(), key=lambda x: x[1])
+    ]
+
+    # Save COCO annotations
+    coco_dataset = {
+        "images": coco_images,
+        "annotations": coco_annotations,
+        "categories": coco_categories,
+    }
+
+    import json
+
+    annotations_path = output_path / "_annotations.coco.json"
+    with open(annotations_path, "w") as f:
+        json.dump(coco_dataset, f, indent=2)
+
+    console.print(f"[green]✓ Created {len(coco_images)} chunks with {len(coco_annotations)} annotations[/green]")
+    console.print(f"[green]✓ Categories: {list(categories_seen.keys())}[/green]")
+    console.print(f"[green]✓ COCO annotations saved to: {annotations_path}[/green]")
+    if draw_bboxes:
+        console.print(f"[green]✓ Debug images saved to: {debug_dir}[/green]")
+
+    return str(output_path)
+
+
 commands = {
     "download": {
         "kaggle-dataset": download_kaggle_dataset,
@@ -199,6 +405,7 @@ commands = {
     "convert": {
         "yolo-to-coco": convert_yolo_to_coco,
         "audio-to-coco": audio_to_coco,
+        "chunk-audio": chunk_audio,
     },
     "train": train,
     "predict": predict,

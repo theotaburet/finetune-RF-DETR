@@ -1,5 +1,9 @@
 """Tests for the audio_to_coco module."""
 
+import json
+import wave
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -11,6 +15,7 @@ from rf_detr_finetuning.audio_to_coco import (
     FrequencyMapper,
     SpectrogramConfig,
     TimeMapper,
+    convert_audio_to_coco,
     decode_bbox_to_frequency,
     spectrogram_to_image,
     validate_coco_dataset,
@@ -302,3 +307,92 @@ class TestAudioMetadata:
 
         assert metadata.sample_rate == 44100  # Default
         assert metadata.confidence == 1.0  # Default
+
+
+def test_convert_audio_to_coco_real_file(tmp_path: Path):
+    """Run end-to-end conversion on a real WAV file."""
+    sample_rate = 16000
+    duration_s = 0.25
+    frequency_hz = 440.0
+
+    t = np.linspace(0, duration_s, int(sample_rate * duration_s), endpoint=False)
+    audio = 0.1 * np.sin(2 * np.pi * frequency_hz * t)
+    samples = (audio * 32767).astype(np.int16)
+
+    audio_path = tmp_path / "sample.wav"
+    with wave.open(str(audio_path), "wb") as wav_file:
+        wav_file.setnchannels(1)
+        wav_file.setsampwidth(2)
+        wav_file.setframerate(sample_rate)
+        wav_file.writeframes(samples.tobytes())
+
+    metadata = {
+        "uuid": "sample",
+        "label_hierarchy": "tone",
+        "annotation": "tone",
+        "duration": duration_s * 1000,
+        "hz_min": 400.0,
+        "hz_max": 480.0,
+        "sample_rate": sample_rate,
+        "channels": 1,
+    }
+    json_path = audio_path.with_suffix(".json")
+    json_path.write_text(json.dumps(metadata), encoding="utf-8")
+
+    output_dir = tmp_path / "out"
+    spec_config = SpectrogramConfig(target_sr=sample_rate, normalize_frequency=False)
+    result_dir = convert_audio_to_coco(
+        tmp_path,
+        output_dir,
+        spec_config=spec_config,
+        split_ratios=(1.0, 0.0, 0.0),
+        random_seed=None,
+    )
+
+    assert result_dir == output_dir
+
+    annotations_path = output_dir / "train" / "_annotations.coco.json"
+    assert annotations_path.exists()
+
+    coco_data = json.loads(annotations_path.read_text(encoding="utf-8"))
+    assert len(coco_data["images"]) == 1
+    assert len(coco_data["annotations"]) == 1
+
+    image_path = output_dir / "train" / "sample.png"
+    assert image_path.exists()
+
+
+@pytest.mark.real_files
+def test_convert_audio_to_coco_with_real_files(tmp_path: Path, pytestconfig: pytest.Config):
+    """Run conversion using real audio/json files when provided."""
+    audio_ini = pytestconfig.getini("real_audio_path")
+    json_ini = pytestconfig.getini("real_json_path")
+
+    if not audio_ini or not json_ini:
+        pytest.skip("Set real_audio_path and real_json_path in pyproject.toml to run this test.")
+
+    audio_path = Path(audio_ini)
+    json_path = Path(json_ini)
+
+    if not audio_path.exists() or not json_path.exists():
+        pytest.skip("Real audio/json files not found.")
+
+    output_dir = tmp_path / "out"
+    spec_config = SpectrogramConfig(target_sr=None, normalize_frequency=True)
+    result_dir = convert_audio_to_coco(
+        input_dir=audio_path.parent,
+        output_dir=output_dir,
+        spec_config=spec_config,
+        split_ratios=(1.0, 0.0, 0.0),
+        random_seed=None,
+        audio_extensions=(audio_path.suffix,),
+    )
+
+    assert result_dir == output_dir
+
+    annotations_path = output_dir / "train" / "_annotations.coco.json"
+    assert annotations_path.exists()
+
+    coco_data = json.loads(annotations_path.read_text(encoding="utf-8"))
+    assert len(coco_data["images"]) >= 1
+    assert len(coco_data["annotations"]) >= 1
