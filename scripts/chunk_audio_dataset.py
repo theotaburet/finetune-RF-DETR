@@ -95,8 +95,12 @@ def chunk_audio_dataset(
     console = Console()
 
     # Load config
-    fft_config, chunk_config = load_chunking_config_from_yaml(config_path)
-    chunker = AudioChunker(fft_config=fft_config, chunk_config=chunk_config)
+    fft_config, chunk_config, preprocessing_config = load_chunking_config_from_yaml(config_path)
+    chunker = AudioChunker(
+        fft_config=fft_config,
+        chunk_config=chunk_config,
+        preprocessing_config=preprocessing_config,
+    )
 
     # Setup output directories
     output_dir.mkdir(parents=True, exist_ok=True)

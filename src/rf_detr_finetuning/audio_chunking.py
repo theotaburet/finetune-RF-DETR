@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
+from ezakodio import hz_to_mel
 from PIL import Image
 
 if TYPE_CHECKING:
@@ -322,11 +323,7 @@ def align_bbox_to_chunk(
 
     # Frequency mapping (mel or linear)
     if use_mel_scale:
-        # Convert Hz to mel scale using formula: mel = 2595 * log10(1 + hz/700)
-        def hz_to_mel(hz: float) -> float:
-            return 2595.0 * np.log10(1.0 + hz / 700.0)
-
-        # Convert Hz to mel scale
+        # Convert Hz to mel scale using ezakodio
         mel_min = hz_to_mel(freq_min)
         mel_max = hz_to_mel(freq_max)
         event_mel_min = hz_to_mel(hz_min)
@@ -574,6 +571,7 @@ class AudioChunker:
 
     This class handles:
     - Loading and chunking audio files
+    - Audio preprocessing (AGC, detrend)
     - Computing spectrograms for each chunk
     - Aligning bounding boxes to chunk coordinates
     - Resizing to target dimensions
@@ -587,6 +585,7 @@ class AudioChunker:
         freq_scale: str = "mel",
         fmin: float = 0.0,
         fmax: float | None = None,
+        preprocessing_config: Any | None = None,
     ) -> None:
         """Initialize the chunker.
 
@@ -596,6 +595,7 @@ class AudioChunker:
             freq_scale: Frequency scale ('mel', 'linear', 'log').
             fmin: Minimum frequency for spectrogram.
             fmax: Maximum frequency (None = Nyquist).
+            preprocessing_config: Audio preprocessing config (AGC, dynamic range).
 
         """
         self.fft_config = fft_config or TimeBasedFFTConfig()
@@ -603,6 +603,7 @@ class AudioChunker:
         self.freq_scale = freq_scale
         self.fmin = fmin
         self.fmax = fmax
+        self.preprocessing_config = preprocessing_config
 
     def _compute_spectrogram(
         self,
@@ -697,10 +698,23 @@ class AudioChunker:
                 random_pad_position=self.chunk_config.random_pad_position,
             )
 
+            # Apply preprocessing (AGC, detrend) if configured
+            if self.preprocessing_config is not None:
+                from rf_detr_finetuning.audio_preprocessing import preprocess_audio
+
+                chunk_audio, _ = preprocess_audio(chunk_audio, sample_rate, self.preprocessing_config)
+
             spec = self._compute_spectrogram(chunk_audio, sample_rate)
             # Flip vertically so high frequencies are at top (standard visualization)
             spec = np.flipud(spec)
-            spec_img = spectrogram_to_image_array(spec)
+
+            # Apply dynamic range compression if configured
+            if self.preprocessing_config is not None:
+                from rf_detr_finetuning.audio_preprocessing import normalize_spectrogram
+
+                spec_img = normalize_spectrogram(spec, self.preprocessing_config.dynamic_range)
+            else:
+                spec_img = spectrogram_to_image_array(spec)
 
             orig_height, orig_width = spec_img.shape[:2]
             target_w = self.chunk_config.target_width or orig_width
@@ -901,14 +915,16 @@ def _draw_bboxes_manual(
     return img
 
 
-def load_chunking_config_from_yaml(yaml_path: Path) -> tuple[TimeBasedFFTConfig, ChunkConfig]:
+def load_chunking_config_from_yaml(
+    yaml_path: Path,
+) -> tuple[TimeBasedFFTConfig, ChunkConfig, Any | None]:
     """Load chunking configuration from YAML file.
 
     Args:
         yaml_path: Path to YAML configuration file.
 
     Returns:
-        Tuple of (TimeBasedFFTConfig, ChunkConfig).
+        Tuple of (TimeBasedFFTConfig, ChunkConfig, PreprocessingConfig or None).
 
     Example YAML::
 
@@ -925,6 +941,14 @@ def load_chunking_config_from_yaml(yaml_path: Path) -> tuple[TimeBasedFFTConfig,
           min_chunk_content_ratio: 0.5
           random_pad_position: true
 
+        preprocessing:
+          agc:
+            enabled: true
+            target_db: -25.0
+          dynamic_range:
+            top_db: 70.0
+            clip_percentile: 99.0
+
     """
     import yaml
 
@@ -933,6 +957,7 @@ def load_chunking_config_from_yaml(yaml_path: Path) -> tuple[TimeBasedFFTConfig,
 
     fft_section = config.get("fft", {})
     chunk_section = config.get("chunking", {})
+    preprocessing_section = config.get("preprocessing", {})
 
     fft_config = TimeBasedFFTConfig(
         fft_ms=fft_section.get("fft_ms", 25.0),
@@ -974,4 +999,11 @@ def load_chunking_config_from_yaml(yaml_path: Path) -> tuple[TimeBasedFFTConfig,
         random_pad_position=chunk_section.get("random_pad_position", True),
     )
 
-    return fft_config, chunk_config
+    # Load preprocessing config if present
+    preprocessing_config = None
+    if preprocessing_section:
+        from rf_detr_finetuning.audio_preprocessing import PreprocessingConfig
+
+        preprocessing_config = PreprocessingConfig.from_dict(preprocessing_section)
+
+    return fft_config, chunk_config, preprocessing_config

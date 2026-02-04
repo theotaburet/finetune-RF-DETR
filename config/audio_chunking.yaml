@@ -63,5 +63,43 @@ spectrogram:
 
   # Frequency range (Hz)
   # null = use full range (0 to Nyquist)
-  fmin: 0.0
+  fmin: 10
   fmax: null
+
+# Audio Preprocessing (AGC and Dynamic Range)
+# These settings help prevent "burned" (clipped) or too dark spectrograms
+preprocessing:
+  # Remove DC offset before processing
+  detrend: true
+
+  # Pre-emphasis coefficient (0 = disabled, 0.97 = typical for speech)
+  preemphasis: 0.0
+
+  # Automatic Gain Control - normalizes audio loudness
+  agc:
+    enabled: true
+    # Target RMS level in dB (lower = quieter spectrogram)
+    # -30 to -25: Conservative, prevents burning on loud sources
+    # -25 to -20: Moderate (default)
+    # -20 to -15: Aggressive, good for quiet sources
+    target_db: -25.0
+    # Maximum gain boost (prevents extreme amplification of very quiet signals)
+    max_gain_db: 30.0
+    # Maximum gain reduction (prevents over-attenuation of loud signals)
+    min_gain_db: -20.0
+    # Frame size for percentile RMS computation
+    frame_size_s: 0.1
+    # Percentile for RMS (0.5 = median, robust to transients)
+    percentile: 0.5
+
+  # Dynamic range control for spectrogram display
+  dynamic_range:
+    # Maximum dynamic range in dB
+    # 60-80: Standard, good detail visibility
+    # 80-100: Full range, may appear dark
+    # 40-60: Compressed, shows quieter details
+    top_db: 70.0
+    # Percentile clipping to prevent burning from outliers
+    # 99.0 = clip top 1% of values
+    # null = no percentile clipping
+    clip_percentile: 99.0

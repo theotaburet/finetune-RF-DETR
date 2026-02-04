@@ -29,8 +29,10 @@ classifiers = [
 dynamic = [ "version" ]
 dependencies = [
   "ezakodio",
+  "jsonargparse>=4.46",
   "kaggle>=1.7.4.5",
   "kagglehub>=0.4.2",
+  "pre-commit>=4.5.1",
   "pyyaml>=6",
   "rfdetr",
   "rich>=13",

@@ -119,7 +119,7 @@ def convert_yolo_to_coco(
     if not data_yaml_path.exists():
         data_yaml_path, temp_yaml_context = _create_temp_data_yaml(class_names)
 
-    # Preprocess images: convert RGBA to RGB
+    # Preprocess images: convert RGBA and grayscale to RGB
     temp_images_dir = tempfile.mkdtemp()
     temp_images_path = Path(temp_images_dir)
     img_paths = []
@@ -127,7 +127,7 @@ def convert_yolo_to_coco(
         img_paths.extend((input_path / "images").glob(f"*.{ext.lstrip('.')}"))
     for img_path in img_paths:
         with Image.open(img_path) as img:
-            if img.mode == "RGBA":
+            if img.mode in ("RGBA", "L", "LA", "P"):
                 img = img.convert("RGB")
             img.save(temp_images_path / img_path.name)
 

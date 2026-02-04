@@ -454,7 +454,7 @@ chunking:
         yaml_path = tmp_path / "config.yaml"
         yaml_path.write_text(yaml_content)
 
-        fft_config, chunk_config = load_chunking_config_from_yaml(yaml_path)
+        fft_config, chunk_config, preprocessing_config = load_chunking_config_from_yaml(yaml_path)
 
         assert fft_config.fft_ms == 30.0
         assert fft_config.hop_ms == 15.0
@@ -494,7 +494,7 @@ def test_chunking_with_real_files(tmp_path: Path, pytestconfig: pytest.Config):
     if not config_path.exists():
         pytest.skip("config/audio_chunking.yaml not found")
 
-    fft_config, chunk_config = load_chunking_config_from_yaml(config_path)
+    fft_config, chunk_config, preprocessing_config = load_chunking_config_from_yaml(config_path)
 
     chunker = AudioChunker(
         fft_config=fft_config,

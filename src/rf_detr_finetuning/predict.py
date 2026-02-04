@@ -70,9 +70,25 @@ def prediction(
 
     # Perform inference
     logging.info(f"Processing image: {image_path}")
+
+    # Load and convert image (handle grayscale spectrograms)
+    image = plt.imread(image_path)
+
+    # Convert grayscale to RGB if needed
+    if image.ndim == 2:  # Grayscale
+        image = np.stack([image, image, image], axis=-1)
+    elif image.shape[-1] == 1:  # Grayscale with channel dimension
+        image = np.repeat(image, 3, axis=-1)
+    elif image.shape[-1] == 4:  # RGBA
+        image = image[..., :3]
+
+    # Ensure uint8
+    if image.dtype != np.uint8:
+        image = (image * 255).clip(0, 255).astype(np.uint8)
+
     with warnings.catch_warnings():
         warnings.filterwarnings("ignore", message="torch.meshgrid:.*")
-        predictions = model.predict(image_path, confidence=confidence)
+        predictions = model.predict(image, confidence=confidence)
     logging.info(f"{predictions=}")
 
     # Get labels from predictions
@@ -86,10 +102,7 @@ def prediction(
     else:
         labels = [class_names.get(int(cls_id), str(int(cls_id))) for cls_id in predictions.class_id]
 
-    # Load the image (ensure uint8 BGR and contiguous for OpenCV)
-    image = plt.imread(image_path)[..., :3]
-    if image.dtype != np.uint8:
-        image = (image * 255).clip(0, 255).astype(np.uint8)
+    # Prepare image for annotation (ensure BGR and contiguous for OpenCV)
     annotated_image = np.ascontiguousarray(image[:, :, ::-1])
 
     annotated_image = sv.BoxAnnotator().annotate(annotated_image, predictions)

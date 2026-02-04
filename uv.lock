@@ -508,7 +508,7 @@ wheels = [
 [[package]]
 name = "ezakodio"
 version = "0.1.0"
-source = { git = "https://github.com/ezako/ezakodio.git#bbed74055352f2317128d59aa36d04de8011f7f2" }
+source = { git = "https://github.com/ezako/ezakodio.git#44a7c0c63e1625dcbe8241d7be0d45c5ccc59bde" }
 dependencies = [
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
@@ -2424,9 +2424,11 @@ name = "rf-detr-training-pipeline"
 source = { editable = "." }
 dependencies = [
     { name = "ezakodio" },
+    { name = "jsonargparse" },
     { name = "kaggle", version = "1.7.4.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "kaggle", version = "1.8.3", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
     { name = "kagglehub" },
+    { name = "pre-commit" },
     { name = "pyyaml" },
     { name = "rfdetr" },
     { name = "rich" },
@@ -2450,10 +2452,12 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "ezakodio", git = "https://github.com/ezako/ezakodio.git" },
+    { name = "jsonargparse", specifier = ">=4.46.0" },
     { name = "jsonargparse", marker = "extra == 'cli'" },
     { name = "kaggle", specifier = ">=1.7.4.5" },
     { name = "kagglehub", specifier = ">=0.4.2" },
     { name = "kagglehub", marker = "extra == 'data'" },
+    { name = "pre-commit", specifier = ">=4.5.1" },
     { name = "pre-commit", marker = "extra == 'dev'" },
     { name = "pytest", marker = "extra == 'dev'" },
     { name = "pyyaml", specifier = ">=6" },
@@ -3080,14 +3084,14 @@ wheels = [
 
 [[package]]
 name = "tqdm"
-version = "4.67.2"
+version = "4.67.3"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "colorama", marker = "sys_platform == 'win32'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/27/89/4b0001b2dab8df0a5ee2787dcbe771de75ded01f18f1f8d53dedeea2882b/tqdm-4.67.2.tar.gz", hash = "sha256:649aac53964b2cb8dec76a14b405a4c0d13612cb8933aae547dd144eacc99653", size = 169514 }
+sdist = { url = "https://files.pythonhosted.org/packages/09/a9/6ba95a270c6f1fbcd8dac228323f2777d886cb206987444e4bce66338dd4/tqdm-4.67.3.tar.gz", hash = "sha256:7d825f03f89244ef73f1d4ce193cb1774a8179fd96f31d7e1dcde62092b960bb", size = 169598 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/f5/e2/31eac96de2915cf20ccaed0225035db149dfb9165a9ed28d4b252ef3f7f7/tqdm-4.67.2-py3-none-any.whl", hash = "sha256:9a12abcbbff58b6036b2167d9d3853042b9d436fe7330f06ae047867f2f8e0a7", size = 78354 },
+    { url = "https://files.pythonhosted.org/packages/16/e1/3079a9ff9b8e11b846c6ac5c8b5bfb7ff225eee721825310c91b3b50304f/tqdm-4.67.3-py3-none-any.whl", hash = "sha256:ee1e4c0e59148062281c49d80b25b67771a127c85fc9676d3be5f243206826bf", size = 78374 },
 ]
 
 [[package]]
