@@ -172,8 +172,7 @@ def chunk_audio_dataset(
                 else:
                     category_id = category_map[category_name]
 
-                # Create synthetic metadata (file-level annotation)
-                # In a real scenario, you might have JSON files with time/freq ranges
+                # Load audio file
                 from ezakodio.io import load_audio
 
                 audio_tensor, sample_rate = load_audio(str(audio_path), mono=True, device="cpu")
@@ -181,12 +180,48 @@ def chunk_audio_dataset(
                 duration_ms = (len(audio) / sample_rate) * 1000
                 fmax = sample_rate / 2
 
+                # Try to load JSON metadata for frequency bounds
+                # Look for matching .json file (same stem as audio file)
+                json_path = audio_path.with_suffix(".json")
+                hz_min = 0.0
+                hz_max = fmax
+
+                if json_path.exists():
+                    try:
+                        with open(json_path) as f:
+                            meta = json.load(f)
+                        # Extract frequency bounds from metadata
+                        hz_min = float(meta.get("hz_min", 0.0))
+                        hz_max = float(meta.get("hz_max", fmax))
+                        # Override category from label_hierarchy if available
+                        hierarchy = meta.get("label_hierarchy", "")
+                        if hierarchy:
+                            if " > " in hierarchy:
+                                category_name = hierarchy.split(" > ")[-1].strip()
+                            else:
+                                category_name = hierarchy
+                        # Ensure category is registered
+                        if category_name not in category_map:
+                            category_id = len(category_map)
+                            category_map[category_name] = category_id
+                            coco_data["categories"].append(
+                                {
+                                    "id": category_id,
+                                    "name": category_name,
+                                    "supercategory": "audio_event",
+                                }
+                            )
+                        else:
+                            category_id = category_map[category_name]
+                    except (json.JSONDecodeError, OSError) as e:
+                        logger.warning(f"Failed to load metadata {json_path}: {e}")
+
                 events = [
                     {
                         "time_start_ms": 0,
                         "time_end_ms": duration_ms,
-                        "hz_min": 0,
-                        "hz_max": fmax,
+                        "hz_min": hz_min,
+                        "hz_max": hz_max,
                         "category": category_name,
                         "category_id": category_id,
                         "is_file_level": True,
