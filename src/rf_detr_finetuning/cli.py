@@ -2,12 +2,14 @@
 
 import logging
 import shutil
+import warnings
 from pathlib import Path
 from typing import Literal
 
 import matplotlib.pyplot as plt
 import supervision as sv
 import yaml
+from rich.console import Console
 
 from rf_detr_finetuning.audio_chunking import (
     AudioChunker,
@@ -80,6 +82,12 @@ def train(config_file: str, dataset: str, model_size: Literal[tuple(MAP_MODEL_SI
         model_size: Size of the RF-DETR model to use.
 
     """
+    console = Console()
+
+    # Suppress PyTorch and RF-DETR warnings
+    warnings.filterwarnings("ignore", category=UserWarning)
+    warnings.filterwarnings("ignore", message=".*TensorBoard.*")
+
     with open(config_file) as f:
         cfg = yaml.safe_load(f)
 
@@ -89,14 +97,17 @@ def train(config_file: str, dataset: str, model_size: Literal[tuple(MAP_MODEL_SI
     metrics_plot = Path("output/metrics_plot.png")
     if not metrics_plot.exists():
         return
-    img = plt.imread(str(metrics_plot))
-    plt.imshow(img)
-    plt.title("Training Metrics")
+
+    console.print("\n[cyan]Training metrics plot available at:[/cyan]", metrics_plot)
+
     try:
+        img = plt.imread(str(metrics_plot))
+        plt.imshow(img)
+        plt.title("Training Metrics")
         if plt.get_backend().lower() != "agg":
             plt.show()
     except Exception:
-        logging.warning("GUI not available, skipping plot display.")
+        pass
 
 
 def predict(

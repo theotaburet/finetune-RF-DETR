@@ -1,9 +1,12 @@
 """Finetuning utilities for RF-DETR models."""
 
-import logging
+import warnings
 
 import torch
 from rfdetr import RFDETRBase, RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
 
 MAP_MODEL_SIZE = {
     "base": RFDETRBase,
@@ -26,18 +29,53 @@ def finetune_model(model_size: str, dataset_path: str, config: dict) -> dict:
         config: Dictionary of training configuration parameters.
 
     """
+    console = Console()
+
+    # Suppress non-critical warnings
+    warnings.filterwarnings("ignore", message=".*positional encodings.*")
+    warnings.filterwarnings("ignore", message=".*patch size.*")
+    warnings.filterwarnings("ignore", message=".*meshgrid.*")
+    warnings.filterwarnings("ignore", message=".*multidimensional indexing.*")
+    warnings.filterwarnings("ignore", message=".*lightning.*")
+
     assert model_size.lower() in MAP_MODEL_SIZE.keys(), f"Model size must be one of {list(MAP_MODEL_SIZE.keys())}"
-    logging.info(f"Loading model from {model_size}")
+
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+
+    # Display training configuration
+    table = Table(title="🚀 RF-DETR Training Configuration", show_header=True, header_style="bold cyan")
+    table.add_column("Parameter", style="cyan", width=25)
+    table.add_column("Value", style="green")
+
+    table.add_row("Model Size", model_size.upper())
+    table.add_row("Dataset Path", dataset_path)
+    table.add_row("Device", device.upper())
+    table.add_row("Epochs", str(config.get("epochs", "N/A")))
+    table.add_row("Batch Size", str(config.get("batch_size", "N/A")))
+    table.add_row("Learning Rate", str(config.get("lr", "N/A")))
+    table.add_row("Image Size", str(config.get("imgsz", "N/A")))
+    table.add_row("Workers", str(config.get("workers", "N/A")))
+    table.add_row("Output Dir", config.get("project", "output") + "/" + config.get("name", "run"))
+
+    console.print()
+    console.print(table)
+    console.print()
+
     ModelClass = MAP_MODEL_SIZE[model_size.lower()]
     model = ModelClass()
 
-    logging.info(f"Updating config for training with dataset at {dataset_path}")
     config["dataset_dir"] = dataset_path
-    config["device"] = "cuda" if torch.cuda.is_available() else "cpu"
-    # Start training
+    config["device"] = device
+
+    console.print(Panel("[bold yellow]Starting training...[/bold yellow]", border_style="yellow"))
+    console.print()
+
+    # Just run training normally without stdout capture (it blocks the training)
+    # RF-DETR will print its own progress
     results = model.train(**config)
 
-    # The training results will typically be saved in the specified project/name directory.
-    # You can inspect the 'results' object or the output directory for metrics and checkpoints.
-    logging.debug(f"Results:\n{results}")
-    print(results)
+    console.print()
+    console.print(Panel("[bold green]✓ Training Complete![/bold green]", border_style="green"))
+    console.print()
+
+    return results

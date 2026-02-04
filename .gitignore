@@ -5,6 +5,8 @@
 # Output during development and testing
 out_tests
 data_tests
+chunked_coco
+split_dataset
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
