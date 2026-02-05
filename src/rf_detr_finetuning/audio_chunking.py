@@ -698,12 +698,8 @@ class AudioChunker:
                 random_pad_position=self.chunk_config.random_pad_position,
             )
 
-            # Apply preprocessing (AGC, detrend) if configured
-            if self.preprocessing_config is not None:
-                from rf_detr_finetuning.audio_preprocessing import preprocess_audio
-
-                chunk_audio, _ = preprocess_audio(chunk_audio, sample_rate, self.preprocessing_config)
-
+            # Preprocessing already applied to full audio file (not per-chunk)
+            # This ensures AGC/detrend has full file context
             spec = self._compute_spectrogram(chunk_audio, sample_rate)
             # Flip vertically so high frequencies are at top (standard visualization)
             spec = np.flipud(spec)
@@ -785,6 +781,19 @@ class AudioChunker:
 
         audio_tensor, sample_rate = load_audio(str(audio_path), mono=True, device="cpu")
         audio = audio_tensor.cpu().numpy().flatten()
+
+        # Apply preprocessing to FULL audio file (not per-chunk)
+        # This ensures AGC/detrend works on entire file context (e.g., 10min)
+        # rather than small chunks (e.g., 6 seconds)
+        if self.preprocessing_config is not None:
+            from rf_detr_finetuning.audio_preprocessing import preprocess_audio
+
+            audio, preprocess_metadata = preprocess_audio(audio, sample_rate, self.preprocessing_config)
+            logger.debug(
+                f"Preprocessed {audio_path.name}: "
+                f"gain={preprocess_metadata.get('gain_applied_db', 0):.2f}dB, "
+                f"RMS {preprocess_metadata['original_rms_db']:.2f}→{preprocess_metadata['final_rms_db']:.2f}dB"
+            )
 
         events = []
         source_uuid = audio_path.stem

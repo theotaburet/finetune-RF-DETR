@@ -16,6 +16,7 @@ import json
 import logging
 from pathlib import Path
 
+import numpy as np
 from PIL import Image
 from rich.console import Console
 from rich.logging import RichHandler
@@ -60,9 +61,18 @@ def chunk_audio_dataset(
     output_dir: Path,
     config_path: Path,
     draw_bboxes: bool = False,
+    debug_colormap: str | None = None,
     audio_extensions: tuple[str, ...] = (".flac", ".wav", ".mp3"),
 ) -> None:
     """Chunk audio dataset organized by class folders.
+
+    Args:
+        input_dir: Input directory containing class folders with audio files.
+        output_dir: Output directory for chunked images and metadata.
+        config_path: Path to chunking configuration YAML.
+        draw_bboxes: Whether to draw bounding boxes on output images.
+        debug_colormap: Optional colormap for debugging visualization.
+        audio_extensions: Tuple of allowed audio file extensions.
 
     Expected structure:
         input_dir/
@@ -181,6 +191,17 @@ def chunk_audio_dataset(
 
                 audio_tensor, sample_rate = load_audio(str(audio_path), mono=True, device="cpu")
                 audio = audio_tensor.cpu().numpy().flatten()
+
+                # Apply preprocessing to FULL audio file (not per-chunk)
+                if preprocessing_config is not None:
+                    from rf_detr_finetuning.audio_preprocessing import preprocess_audio
+
+                    audio, preprocess_metadata = preprocess_audio(audio, sample_rate, preprocessing_config)
+                    logger.debug(
+                        f"Preprocessed {audio_path.name}: "
+                        f"gain={preprocess_metadata.get('gain_applied_db', 0):.2f}dB, "
+                        f"RMS {preprocess_metadata['original_rms_db']:.2f}→{preprocess_metadata['final_rms_db']:.2f}dB"
+                    )
                 duration_ms = (len(audio) / sample_rate) * 1000
                 fmax = sample_rate / 2
 
@@ -292,7 +313,16 @@ def chunk_audio_dataset(
                     # Draw debug bboxes
                     if debug_dir and chunk.bboxes:
                         debug_path = debug_dir / f"{chunk_id}_debug.png"
-                        draw_bboxes_on_spectrogram(chunk.spectrogram, chunk.bboxes, debug_path)
+                        debug_spec = chunk.spectrogram
+                        if debug_colormap:
+                            import matplotlib.pyplot as plt
+
+                            cmap = plt.get_cmap(debug_colormap)
+                            spec_norm = debug_spec.astype(np.float32)
+                            spec_norm = (spec_norm - spec_norm.min()) / (spec_norm.max() - spec_norm.min() + 1e-8)
+                            spec_rgba = cmap(spec_norm)
+                            debug_spec = (spec_rgba[..., :3] * 255).astype(np.uint8)
+                        draw_bboxes_on_spectrogram(debug_spec, chunk.bboxes, debug_path)
 
                     image_id += 1
 
@@ -361,6 +391,12 @@ def main() -> None:
         help="Generate debug images with bboxes drawn",
     )
     parser.add_argument(
+        "--debug-colormap",
+        type=str,
+        default=None,
+        help="Optional colormap for debug images (e.g., magma, viridis, inferno, plasma)",
+    )
+    parser.add_argument(
         "--audio-extensions",
         nargs="+",
         default=[".flac", ".wav", ".mp3"],
@@ -382,6 +418,7 @@ def main() -> None:
         output_dir=args.output_dir,
         config_path=args.config,
         draw_bboxes=args.draw_bboxes,
+        debug_colormap=args.debug_colormap,
         audio_extensions=tuple(args.audio_extensions),
     )
 

@@ -305,6 +305,8 @@ def apply_agc(
     )
 
     # Convert back to numpy
+    if hasattr(audio_out_t, "cpu"):
+        audio_out_t = audio_out_t.cpu()
     audio_out = audio_out_t.numpy()
 
     # Compute gain applied
@@ -328,7 +330,10 @@ def apply_detrend(audio: np.ndarray) -> np.ndarray:
 
     """
     audio_t = torch.from_numpy(audio) if isinstance(audio, np.ndarray) else audio
-    return detrend(audio_t, mode="constant").numpy()
+    out = detrend(audio_t, mode="constant")
+    if hasattr(out, "cpu"):
+        out = out.cpu()
+    return out.numpy()
 
 
 def apply_preemphasis(audio: np.ndarray, coef: float = 0.97) -> np.ndarray:
@@ -349,7 +354,10 @@ def apply_preemphasis(audio: np.ndarray, coef: float = 0.97) -> np.ndarray:
         return audio
 
     audio_t = torch.from_numpy(audio) if isinstance(audio, np.ndarray) else audio
-    return preemphasis(audio_t, coef=coef).numpy()
+    out = preemphasis(audio_t, coef=coef)
+    if hasattr(out, "cpu"):
+        out = out.cpu()
+    return out.numpy()
 
 
 def preprocess_audio(

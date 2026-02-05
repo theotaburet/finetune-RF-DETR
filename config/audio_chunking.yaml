@@ -6,17 +6,17 @@ fft:
   # FFT window duration in milliseconds
   # Larger = better frequency resolution, worse time resolution
   # Recommended: 20-50ms for general audio, 10-25ms for transients
-  fft_ms: 20.0
+  fft_ms: 10.0
 
   # Hop duration in milliseconds (time per spectrogram pixel)
   # Smaller = finer time resolution, larger spectrograms
   # Recommended: 5-15ms
-  hop_ms: 10.0
+  hop_ms: 5.0
 
   # Number of mel bands (spectrogram height before resize)
   # More bands = finer frequency resolution
   # Recommended: 64-256
-  n_mels: 128 # TODO we might try 256 later for better freq resolution
+  n_mels: 256 # TODO we might try 256 later for better freq resolution
 
 # Chunking Configuration
 chunking:
@@ -82,9 +82,9 @@ preprocessing:
     # -30 to -25: Conservative, prevents burning on loud sources
     # -25 to -20: Moderate (default)
     # -20 to -15: Aggressive, good for quiet sources
-    target_db: -25.0
+    target_db: -30.0
     # Maximum gain boost (prevents extreme amplification of very quiet signals)
-    max_gain_db: 30.0
+    max_gain_db: 60.0
     # Maximum gain reduction (prevents over-attenuation of loud signals)
     min_gain_db: -20.0
     # Frame size for percentile RMS computation
@@ -98,7 +98,7 @@ preprocessing:
     # 60-80: Standard, good detail visibility
     # 80-100: Full range, may appear dark
     # 40-60: Compressed, shows quieter details
-    top_db: 70.0
+    top_db: 80.0
     # Percentile clipping to prevent burning from outliers
     # 99.0 = clip top 1% of values
     # null = no percentile clipping

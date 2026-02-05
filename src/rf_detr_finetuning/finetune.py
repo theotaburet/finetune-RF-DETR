@@ -65,6 +65,7 @@ def finetune_model(model_size: str, dataset_path: str, config: dict) -> dict:
     model = ModelClass()
 
     config["dataset_dir"] = dataset_path
+    config["coco_path"] = dataset_path  # Required for dataset_file='coco'
     config["device"] = device
 
     console.print(Panel("[bold yellow]Starting training...[/bold yellow]", border_style="yellow"))
