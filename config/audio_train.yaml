@@ -1,7 +1,7 @@
 # Audio Detection Training Configuration
 # Note: Audio dataset has ~1993 images (vs ~112 for CCTV) - expect longer training
 
-epochs: 5
+epochs: 20
 batch_size: 8  # Increase if GPU memory allows (RTX 4070 has 8GB)
 imgsz: 640
 workers: 4  # Increase for faster data loading
