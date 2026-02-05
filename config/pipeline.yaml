@@ -1,0 +1,62 @@
+name: rf_detr_pipeline
+description: RF-DETR Audio Event Detection Pipeline
+class_names: []
+classes_file: null
+preprocess:
+  enabled: false
+  audio_dir: /mnt/d/SoundBase/Sounds/SDK_test
+  metadata_dir: /mnt/d/SoundBase/Sounds/SDK_test
+  output_dir: data/processed
+  chunking_config: config/audio_chunking.yaml
+  extensions:
+  - .flac
+  - .wav
+  - .mp3
+  recursive: true
+  debug_visualize: false
+  max_files: null  # Process all files (set to number for testing)
+split:
+  enabled: false
+  input_dir: data/processed
+  output_dir: data/split_dataset
+  train_ratio: 0.7
+  val_ratio: 0.2
+  test_ratio: 0.1
+  seed: 42
+  stratify: true
+train:
+  enabled: true
+  dataset_dir: data/split_dataset
+  output_dir: output
+  model_size: base
+  pretrained_weights: null
+  epochs: 5
+  batch_size: 8
+  learning_rate: 0.0001
+  num_workers: 4
+  device: cuda
+  resume_from: null
+  early_stopping_patience: 10
+  save_every_n_epochs: 5
+evaluate:
+  enabled: false
+  weights: output/checkpoint_best.pth
+  test_dir: data/split_dataset/test
+  output_dir: output/eval
+  confidence_threshold: 0.5
+  iou_threshold: 0.5
+  save_visualizations: true
+infer:
+  enabled: false
+  weights: output/checkpoint_best.pth
+  audio_dir: data/inference
+  output_dir: output/predictions
+  chunking_config: config/audio_chunking.yaml
+  extensions:
+  - .flac
+  - .wav
+  - .mp3
+  recursive: true
+  confidence_threshold: 0.5
+  merge_gap_ms: 100.0
+  output_format: json

@@ -6,7 +6,7 @@ fft:
   # FFT window duration in milliseconds
   # Larger = better frequency resolution, worse time resolution
   # Recommended: 20-50ms for general audio, 10-25ms for transients
-  fft_ms: 10.0
+  fft_ms: 50
 
   # Hop duration in milliseconds (time per spectrogram pixel)
   # Smaller = finer time resolution, larger spectrograms
