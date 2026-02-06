@@ -101,7 +101,7 @@ def convert_yolo_to_coco(
             parsed = ast.literal_eval(raw_value)
         except (ValueError, SyntaxError):
             parsed = raw_value
-        if isinstance(parsed, (list, tuple)):
+        if isinstance(parsed, list | tuple):
             split_ratios = list(parsed)
         else:
             split_ratios = [float(v) for v in raw_value.replace("(", "").replace(")", "").split(",") if v.strip()]

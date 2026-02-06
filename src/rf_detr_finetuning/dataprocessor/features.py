@@ -64,6 +64,13 @@ def compute_mel_spectrogram(
     n_fft = max(n_fft, 1)
     hop_length = max(hop_length, 1)
 
+    # Pad audio if too short for FFT window
+    audio_length = len(audio)
+    if audio_length < n_fft:
+        padding_needed = n_fft - audio_length
+        audio = np.pad(audio, (0, padding_needed), mode="constant", constant_values=0.0)
+        logger.debug(f"Padded audio: {audio_length} -> {len(audio)} samples for n_fft={n_fft}")
+
     try:
         spec = mel_spectrogram(
             audio_tensor,

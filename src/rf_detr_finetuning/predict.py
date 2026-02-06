@@ -94,7 +94,7 @@ def prediction(
     # Get labels from predictions
     if not class_names:
         class_names = checkpoint_class_names or model.class_names
-    if isinstance(class_names, (list, tuple)):
+    if isinstance(class_names, list | tuple):
         labels = [
             class_names[int(cls_id)] if int(cls_id) < len(class_names) else str(int(cls_id))
             for cls_id in predictions.class_id

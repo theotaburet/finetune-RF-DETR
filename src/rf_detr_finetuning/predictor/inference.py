@@ -452,7 +452,7 @@ class RFDETRPredictor(Predictor):
 
         return PredictionResult(
             detections=detections,
-            image_path=str(image) if isinstance(image, (str, Path)) else None,
+            image_path=str(image) if isinstance(image, str | Path) else None,
         )
 
     def predict_batch(

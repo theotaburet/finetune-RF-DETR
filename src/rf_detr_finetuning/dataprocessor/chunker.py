@@ -236,6 +236,17 @@ class AudioChunker:
         """
         audio, sample_rate = load_audio_file(audio_path)
 
+        # Pad short audio files to meet minimum FFT requirements
+        n_fft = self.fft_config.get_n_fft(sample_rate)
+        if len(audio) < n_fft:
+            original_length = len(audio)
+            padding_needed = n_fft - len(audio)
+            audio = np.pad(audio, (0, padding_needed), mode="constant", constant_values=0)
+            logger.debug(
+                f"Padded {audio_path.name}: {original_length} -> {len(audio)} samples "
+                f"({original_length / sample_rate * 1000:.1f}ms -> {len(audio) / sample_rate * 1000:.1f}ms)"
+            )
+
         # Apply preprocessing to FULL audio file (not per-chunk)
         if self.preprocessing_config is not None:
             audio, preprocess_metadata = preprocess_audio(audio, sample_rate, self.preprocessing_config)
