@@ -269,9 +269,10 @@ def chunk_audio(
             hop_ms=hop_ms,
             n_mels=n_mels,
         )
+        overlap_ratio = overlap_ms / window_duration_ms if window_duration_ms > 0 else 0.0
         chunk_config = ChunkConfig(
             window_duration_ms=window_duration_ms,
-            overlap_ms=overlap_ms,
+            overlap_ratio=overlap_ratio,
             target_width=target_width,
             target_height=target_height,
             padding_mode=padding_mode,

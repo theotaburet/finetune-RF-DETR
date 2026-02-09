@@ -94,6 +94,19 @@ class SplitConfig:
     seed: int = 42
     stratify: bool = True
 
+    def __post_init__(self) -> None:
+        """Validate split ratios."""
+        for name, val in [
+            ("train_ratio", self.train_ratio),
+            ("val_ratio", self.val_ratio),
+            ("test_ratio", self.test_ratio),
+        ]:
+            if not 0.0 <= val <= 1.0:
+                raise ValueError(f"{name} must be in [0, 1], got {val}")
+        total = self.train_ratio + self.val_ratio + self.test_ratio
+        if abs(total - 1.0) > 1e-6:
+            raise ValueError(f"Split ratios must sum to 1.0, got {total:.4f}")
+
 
 @dataclass
 class TrainConfig:
@@ -385,14 +398,16 @@ class PipelineStep:
 
     name: str = "step"
 
-    def __init__(self, config: PipelineConfig) -> None:
+    def __init__(self, config: PipelineConfig, dry_run: bool = False) -> None:
         """Initialize the pipeline step.
 
         Args:
             config: Pipeline configuration.
+            dry_run: If True, validate and report without executing.
 
         """
         self.config = config
+        self.dry_run = dry_run
         self.results: dict[str, Any] = {}
 
     def run(self) -> bool:
@@ -410,6 +425,15 @@ class PipelineStep:
 
         """
         return []
+
+    def dry_run_report(self) -> dict[str, Any]:
+        """Report what this step would do without executing.
+
+        Returns:
+            Dictionary describing planned actions.
+
+        """
+        return {"step": self.name, "action": "would execute"}
 
 
 class PreprocessStep(PipelineStep):
@@ -448,6 +472,14 @@ class PreprocessStep(PipelineStep):
         console.print(f"  Audio dir: {cfg.audio_dir}")
         console.print(f"  Metadata dir: {cfg.metadata_dir}")
         console.print(f"  Output dir: {cfg.output_dir}")
+
+        if self.dry_run:
+            report = self.dry_run_report()
+            self.results = report
+            console.print("  [yellow]DRY RUN[/yellow] - would process files")
+            for k, v in report.items():
+                console.print(f"    {k}: {v}")
+            return True
 
         try:
             import numpy as np
@@ -554,11 +586,11 @@ class PreprocessStep(PipelineStep):
                             }
                         )
 
-                        # Add annotations
+                        # Add annotations (1-based IDs per COCO convention)
                         for bbox in chunk.bboxes:
                             label = bbox.category or "unknown"
                             if label not in class_to_id:
-                                class_to_id[label] = len(class_to_id)
+                                class_to_id[label] = len(class_to_id) + 1
 
                             all_annotations.append(
                                 {
@@ -618,6 +650,30 @@ class PreprocessStep(PipelineStep):
             traceback.print_exc()
             return False
 
+    def dry_run_report(self) -> dict[str, Any]:
+        """Report preprocessing plan."""
+        cfg = self.config.preprocess
+        audio_dir = Path(cfg.audio_dir)
+        metadata_dir = Path(cfg.metadata_dir)
+
+        audio_exts = {".flac", ".wav", ".mp3", ".ogg", ".m4a"}
+        audio_count = 0
+        metadata_count = 0
+        if audio_dir.exists():
+            glob = "**/*" if cfg.recursive else "*"
+            for ext in audio_exts:
+                audio_count += len(list(audio_dir.glob(f"{glob}{ext}")))
+        if metadata_dir.exists():
+            metadata_count = len(list(metadata_dir.glob("**/*.json")))
+
+        return {
+            "audio_files": audio_count,
+            "metadata_files": metadata_count,
+            "output_dir": cfg.output_dir,
+            "chunking_config": cfg.chunking_config,
+            "max_files": cfg.max_files,
+        }
+
 
 class SplitStep(PipelineStep):
     """Dataset splitting step."""
@@ -654,6 +710,25 @@ class SplitStep(PipelineStep):
         console.print(f"  Input dir: {cfg.input_dir}")
         console.print(f"  Output dir: {cfg.output_dir}")
         console.print(f"  Ratios: train={cfg.train_ratio}, val={cfg.val_ratio}, test={cfg.test_ratio}")
+
+        if self.dry_run:
+            n_images = 0
+            ann_path = Path(cfg.input_dir) / "_annotations.coco.json"
+            if ann_path.exists():
+                with open(ann_path) as f:
+                    n_images = len(json.load(f).get("images", []))
+            n_train = int(n_images * cfg.train_ratio)
+            n_val = int(n_images * cfg.val_ratio)
+            n_test = n_images - n_train - n_val
+            self.results = {
+                "total_images": n_images,
+                "train": n_train,
+                "val": n_val,
+                "test": n_test,
+            }
+            console.print("  [yellow]DRY RUN[/yellow] - would split:")
+            console.print(f"    train={n_train}, val={n_val}, test={n_test}")
+            return True
 
         try:
             import numpy as np
@@ -724,6 +799,7 @@ class SplitStep(PipelineStep):
                     split_dir.mkdir(parents=True, exist_ok=True)
 
                     # Copy images
+                    skipped = 0
                     for img_info in split_data["images"]:
                         progress.update(
                             task, description=f"[cyan]{split_name}: {Path(img_info['file_name']).name[:30]}"
@@ -732,9 +808,17 @@ class SplitStep(PipelineStep):
                         dst = split_dir / Path(img_info["file_name"]).name
                         if src.exists():
                             shutil.copy2(src, dst)
+                            if not dst.exists() or dst.stat().st_size != src.stat().st_size:
+                                logger.warning(f"Copy verification failed: {src} → {dst}")
+                        else:
+                            skipped += 1
+                            logger.warning(f"Source image not found, skipping: {src}")
                         # Update file_name to be relative
                         img_info["file_name"] = Path(img_info["file_name"]).name
                         progress.advance(task)
+
+                    if skipped:
+                        console.print(f"  [yellow]![/yellow] {split_name}: {skipped} images not found")
 
                     # Save annotations
                     with open(split_dir / "_annotations.coco.json", "w") as f:
@@ -798,6 +882,17 @@ class TrainStep(PipelineStep):
         console.print(f"  Model: RF-DETR {cfg.model_size}")
         console.print(f"  Epochs: {cfg.epochs}")
         console.print(f"  Batch size: {cfg.batch_size}")
+
+        if self.dry_run:
+            self.results = {
+                "model_size": cfg.model_size,
+                "epochs": cfg.epochs,
+                "batch_size": cfg.batch_size,
+                "dataset_dir": cfg.dataset_dir,
+            }
+            console.print("  [yellow]DRY RUN[/yellow] - would train:")
+            console.print(f"    {cfg.model_size} for {cfg.epochs} epochs")
+            return True
 
         try:
             from rf_detr_finetuning.trainer import (
@@ -902,6 +997,21 @@ class EvaluateStep(PipelineStep):
         console.print(f"  Weights: {cfg.weights}")
         console.print(f"  Test dir: {cfg.test_dir}")
 
+        if self.dry_run:
+            n_images = 0
+            ann_path = Path(cfg.test_dir) / "_annotations.coco.json"
+            if ann_path.exists():
+                with open(ann_path) as f:
+                    n_images = len(json.load(f).get("images", []))
+            self.results = {
+                "test_images": n_images,
+                "weights": cfg.weights,
+                "confidence_threshold": cfg.confidence_threshold,
+            }
+            console.print("  [yellow]DRY RUN[/yellow] - would evaluate:")
+            console.print(f"    {n_images} test images")
+            return True
+
         try:
             import numpy as np
             from PIL import Image
@@ -916,7 +1026,9 @@ class EvaluateStep(PipelineStep):
             with open(coco_path) as f:
                 coco_data = json.load(f)
 
-            class_names = [c["name"] for c in sorted(coco_data["categories"], key=lambda x: x["id"])]
+            sorted_categories = sorted(coco_data["categories"], key=lambda x: x["id"])
+            class_names = [c["name"] for c in sorted_categories]
+            idx_to_category_id = {idx: c["id"] for idx, c in enumerate(sorted_categories)}
 
             # Initialize predictor
             predictor = RFDETRPredictor(
@@ -963,10 +1075,13 @@ class EvaluateStep(PipelineStep):
 
                     # Store predictions
                     for det in result.detections:
+                        category_id = idx_to_category_id.get(det.class_id)
+                        if category_id is None:
+                            continue
                         predictions.append(
                             {
                                 "image_id": img_info["id"],
-                                "category_id": det.class_id,
+                                "category_id": category_id,
                                 "bbox": [det.x1, det.y1, det.x2 - det.x1, det.y2 - det.y1],
                                 "score": det.score,
                             }
@@ -1039,6 +1154,22 @@ class InferStep(PipelineStep):
         console.print("\n[bold cyan]Step: Inference[/bold cyan]")
         console.print(f"  Audio dir: {cfg.audio_dir}")
         console.print(f"  Output dir: {cfg.output_dir}")
+
+        if self.dry_run:
+            audio_dir = Path(cfg.audio_dir)
+            audio_count = 0
+            if audio_dir.exists():
+                glob = "**/*" if cfg.recursive else "*"
+                for ext in cfg.extensions:
+                    audio_count += len(list(audio_dir.glob(f"{glob}{ext}")))
+            self.results = {
+                "audio_files": audio_count,
+                "output_dir": cfg.output_dir,
+                "confidence_threshold": cfg.confidence_threshold,
+            }
+            console.print("  [yellow]DRY RUN[/yellow] - would infer:")
+            console.print(f"    {audio_count} audio files")
+            return True
 
         try:
             # Import the audio inference pipeline
@@ -1156,6 +1287,7 @@ class Pipeline:
         evaluate: bool | None = None,
         infer: bool | None = None,
         run_all: bool = False,
+        dry_run: bool = False,
     ) -> bool:
         """Run the pipeline with selected steps.
 
@@ -1166,6 +1298,7 @@ class Pipeline:
             evaluate: Override evaluate step enabled.
             infer: Override infer step enabled.
             run_all: Run all steps (overrides config).
+            dry_run: If True, validate and report without executing.
 
         Returns:
             True if all enabled steps succeeded.
@@ -1201,9 +1334,10 @@ class Pipeline:
             return True
 
         # Display plan
+        mode_label = " [yellow](DRY RUN)[/yellow]" if dry_run else ""
         console.print(
             Panel(
-                f"[bold]{self.config.name}[/bold]\n{self.config.description}",
+                f"[bold]{self.config.name}[/bold]{mode_label}\n{self.config.description}",
                 title="Pipeline",
             )
         )
@@ -1232,7 +1366,7 @@ class Pipeline:
 
             # Only validate if dependencies won't create the required inputs
             if not deps_will_run:
-                step = step_cls(self.config)
+                step = step_cls(self.config, dry_run=dry_run)
                 errors = step.validate()
                 if errors:
                     all_errors.extend([f"[{step_name}] {e}" for e in errors])
@@ -1264,7 +1398,7 @@ class Pipeline:
         console.print("\n")
 
         for idx, (step_name, step_cls) in enumerate(steps_to_run):
-            step = step_cls(self.config)
+            step = step_cls(self.config, dry_run=dry_run)
             progress_manager.start_step(step_name)
 
             try:
@@ -1411,6 +1545,11 @@ def parse_args() -> argparse.Namespace:
 
     # Other options
     parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Validate configuration and report what each step would do without executing",
+    )
+    parser.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -1482,6 +1621,7 @@ def main() -> int:
         evaluate=evaluate,
         infer=infer,
         run_all=args.all,
+        dry_run=args.dry_run,
     )
 
     return 0 if success else 1

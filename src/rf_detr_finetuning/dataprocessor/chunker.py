@@ -265,10 +265,13 @@ class AudioChunker:
 
             # Extract label from hierarchy or annotation
             hierarchy = meta.get("label_hierarchy", "")
-            if hierarchy and " > " in hierarchy:
-                label = hierarchy.split(" > ")[-1].strip()
-            elif hierarchy:
-                label = hierarchy
+            if isinstance(hierarchy, str) and hierarchy:
+                if " + " in hierarchy:
+                    label = hierarchy.split(" + ")[-1].strip()
+                elif " > " in hierarchy:
+                    label = hierarchy.split(" > ")[-1].strip()
+                else:
+                    label = hierarchy.strip()
             else:
                 label = meta.get("annotation", "unknown")
 

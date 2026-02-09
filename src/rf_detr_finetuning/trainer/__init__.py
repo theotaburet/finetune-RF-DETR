@@ -23,6 +23,9 @@ from rf_detr_finetuning.trainer.loop import (
     Trainer,
     TrainingState,
 )
+from rf_detr_finetuning.trainer.metrics import (
+    compute_coco_metrics,
+)
 from rf_detr_finetuning.trainer.rfdetr_wrapper import (
     RFDETRConfig,
     RFDETRTrainer,
@@ -45,6 +48,8 @@ __all__ = [
     # Logging
     "TrainingLogger",
     "MetricsTracker",
+    # Metrics
+    "compute_coco_metrics",
     # RF-DETR wrapper
     "RFDETRTrainer",
     "RFDETRConfig",

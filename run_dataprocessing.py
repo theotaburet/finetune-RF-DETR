@@ -339,13 +339,11 @@ def load_events_from_metadata(metadata_path: Path) -> list[dict[str, Any]]:
         end_ms = event.get("end_ms") or event.get("end_time_ms") or event.get("offset_ms", 0)
 
         # Extract label (prefer label_hierarchy's last part)
-        label = event.get("label", "unknown")
-        if "label_hierarchy" in event:
-            hierarchy = event["label_hierarchy"]
-            if isinstance(hierarchy, str) and " + " in hierarchy:
-                label = hierarchy.split(" + ")[-1]
-            elif isinstance(hierarchy, str):
-                label = hierarchy
+        hierarchy = event.get("label_hierarchy", "")
+        if isinstance(hierarchy, str) and hierarchy:
+            label = hierarchy.split(" + ")[-1]
+        else:
+            label = event.get("annotation") or event.get("label", "unknown")
 
         # Get frequency bounds if available
         min_freq = event.get("min_freq_hz") or event.get("low_freq_hz")
@@ -516,7 +514,7 @@ def main() -> int:
         debug_dir.mkdir(parents=True, exist_ok=True)
 
     # Create chunker
-    from rf_detr_finetuning.dataprocessor import AudioChunker
+    from rf_detr_finetuning.dataprocessor import AudioChunker, load_audio_file
 
     chunker = AudioChunker(
         fft_config=fft_config,
@@ -543,10 +541,37 @@ def main() -> int:
 
             try:
                 # Load events
-                events = load_events_from_metadata(metadata_path)
+                raw_events = load_events_from_metadata(metadata_path)
+
+                # Load audio
+                audio, sample_rate = load_audio_file(audio_path)
+                fmax = chunker.fmax if chunker.fmax else sample_rate / 2
+
+                # Map events to chunker format with category IDs
+                events = []
+                for event in raw_events:
+                    label = event.get("label", "unknown")
+                    if label not in categories:
+                        categories[label] = len(categories) + 1
+                    cat_id = categories[label]
+
+                    hz_min = event.get("min_freq_hz")
+                    hz_max = event.get("max_freq_hz")
+
+                    events.append(
+                        {
+                            "time_start_ms": event.get("start_ms", 0.0),
+                            "time_end_ms": event.get("end_ms", 0.0),
+                            "hz_min": hz_min if hz_min is not None else chunker.fmin,
+                            "hz_max": hz_max if hz_max is not None else fmax,
+                            "category": label,
+                            "category_id": cat_id,
+                            "is_file_level": event.get("is_file_level", False),
+                        }
+                    )
 
                 # Process with chunker
-                chunks = chunker.process_file(str(audio_path), events)
+                chunks = chunker.chunk_audio(audio, sample_rate, events, source_uuid=audio_path.stem)
 
                 logger.debug(f"Generated {len(chunks)} chunks from {audio_path.name}")
 
@@ -562,15 +587,9 @@ def main() -> int:
                     # Build bbox annotations
                     chunk_bboxes = []
                     for bbox in chunk.bboxes:
-                        # Get or create category ID
-                        label = bbox.label if hasattr(bbox, "label") else "unknown"
-                        if label not in categories:
-                            categories[label] = len(categories) + 1
-                        cat_id = categories[label]
-
                         chunk_bboxes.append(
                             {
-                                "category_id": cat_id,
+                                "category_id": bbox.category_id,
                                 "bbox": bbox.to_coco_bbox(),  # [x, y, w, h]
                             }
                         )
@@ -624,6 +643,7 @@ def main() -> int:
     else:
         # Split into train/val/test
         import random
+        import shutil
 
         random.seed(42)
         random.shuffle(all_chunks_data)
@@ -646,12 +666,12 @@ def main() -> int:
             split_dir = output_dir / split_name
             split_dir.mkdir(parents=True, exist_ok=True)
 
-            # Move images to split directory
+            # Copy images to split directory (non-destructive)
             for chunk in split_data:
                 src = images_dir / chunk["file_name"]
                 dst = split_dir / chunk["file_name"]
-                if src.exists():
-                    src.rename(dst)
+                if src.exists() and not dst.exists():
+                    shutil.copy2(src, dst)
 
             # Update file names and save annotations
             coco_data = build_coco_dataset(split_data, categories)
@@ -660,10 +680,6 @@ def main() -> int:
                 json.dump(coco_data, f, indent=2)
 
             console.print(f"[green]{split_name}:[/green] {len(split_data)} images → {split_dir}")
-
-        # Clean up images_dir if empty
-        if images_dir.exists() and not any(images_dir.iterdir()):
-            images_dir.rmdir()
 
     # Summary
     console.print()
