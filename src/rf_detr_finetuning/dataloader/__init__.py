@@ -4,6 +4,13 @@ Provides dataset classes, collate functions, and train/val/test splitting.
 
 """
 
+from rf_detr_finetuning.dataloader.coco_export import (
+    CategoryRegistry,
+    COCODatasetBuilder,
+    convert_audio_to_coco,
+    parse_frequency_bins,
+    validate_coco_dataset,
+)
 from rf_detr_finetuning.dataloader.collate import (
     collate_detections,
     collate_with_targets,
@@ -40,4 +47,10 @@ __all__ = [
     # Samplers
     "DeterministicSampler",
     "BalancedClassSampler",
+    # COCO Export
+    "COCODatasetBuilder",
+    "CategoryRegistry",
+    "convert_audio_to_coco",
+    "parse_frequency_bins",
+    "validate_coco_dataset",
 ]

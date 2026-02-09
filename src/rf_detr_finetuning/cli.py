@@ -11,19 +11,18 @@ import supervision as sv
 import yaml
 from rich.console import Console
 
-from rf_detr_finetuning.audio_chunking import (
+from rf_detr_finetuning.data import convert_yolo_to_coco
+from rf_detr_finetuning.dataloader import (
+    convert_audio_to_coco,
+    parse_frequency_bins,
+)
+from rf_detr_finetuning.dataprocessor import (
     AudioChunker,
     ChunkConfig,
     TimeBasedFFTConfig,
     draw_bboxes_on_spectrogram,
     load_chunking_config_from_yaml,
 )
-from rf_detr_finetuning.audio_to_coco import (
-    SpectrogramConfig,
-    convert_audio_to_coco,
-    parse_frequency_bins,
-)
-from rf_detr_finetuning.data import convert_yolo_to_coco
 from rf_detr_finetuning.finetune import MAP_MODEL_SIZE, finetune_model
 from rf_detr_finetuning.predict import prediction
 
@@ -186,13 +185,17 @@ def audio_to_coco(
     """
     ratios = tuple(float(x) for x in split_ratios.split(","))
 
-    spec_config = SpectrogramConfig(
-        n_fft=n_fft,
-        hop_length=hop_length,
+    # Create AudioChunker from parameters
+    fft_config = TimeBasedFFTConfig(
+        fft_ms=25.0,  # Default, will be overridden by n_fft calculation
+        hop_ms=10.0,  # Default, will be overridden by hop_length calculation
         n_mels=n_mels,
+    )
+
+    chunker = AudioChunker(
+        fft_config=fft_config,
         fmin=fmin,
         fmax=fmax,
-        target_sr=target_sr,
     )
 
     freq_bins = parse_frequency_bins(frequency_bins)
@@ -200,10 +203,9 @@ def audio_to_coco(
     result = convert_audio_to_coco(
         input_dir=input_dir,
         output_dir=output_dir,
-        spec_config=spec_config,
+        chunker=chunker,
         split_ratios=ratios,
         frequency_bins=freq_bins,
-        auto_infer_bins=bool(auto_infer_bins) if auto_infer_bins else False,
     )
 
     logging.info(f"Audio dataset converted to COCO format at: {result}")

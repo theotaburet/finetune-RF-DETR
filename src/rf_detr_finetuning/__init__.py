@@ -27,61 +27,25 @@ __version__ = "0.2.0"
 # =============================================================================
 # Legacy API (backward compatibility)
 # =============================================================================
-from rf_detr_finetuning.audio_chunking import (
-    AudioChunk as LegacyAudioChunk,
-)
-from rf_detr_finetuning.audio_chunking import (
-    AudioChunker as LegacyAudioChunker,
-)
-from rf_detr_finetuning.audio_chunking import (
-    ChunkBbox as LegacyChunkBbox,
-)
-from rf_detr_finetuning.audio_chunking import (
-    ChunkConfig as LegacyChunkConfig,
-)
-from rf_detr_finetuning.audio_chunking import (
-    TimeBasedFFTConfig as LegacyTimeBasedFFTConfig,
-)
-from rf_detr_finetuning.audio_chunking import (
-    draw_bboxes_on_spectrogram,
-)
-from rf_detr_finetuning.audio_chunking import (
-    load_chunking_config_from_yaml as legacy_load_chunking_config,
-)
-
-__all__ = [
-    "LegacyAudioChunk",
-    "LegacyAudioChunker",
-    "LegacyChunkBbox",
-    "LegacyChunkConfig",
-    "LegacyTimeBasedFFTConfig",
-    "legacy_load_chunking_config",
-    "draw_bboxes_on_spectrogram",
-]
-from rf_detr_finetuning.audio_to_coco import (
-    AudioMetadata,
-    BboxFrequencyInfo,
-    BoundingBox,
-    CategoryRegistry,
-    COCODataset,
-    FrequencyMapper,
-    SpectrogramConfig,
-    TimeMapper,
-    convert_audio_to_coco,
-    decode_bbox_to_frequency,
-    infer_frequency_bins_from_data,
-)
+# Legacy modules have been removed. Use the new modular API instead:
+# - from rf_detr_finetuning.dataprocessor import AudioChunker, ChunkConfig, TimeBasedFFTConfig
+# - from rf_detr_finetuning.dataloader import COCODatasetBuilder, CategoryRegistry
 from rf_detr_finetuning.data import convert_yolo_to_coco
 
 # Data loading
 from rf_detr_finetuning.dataloader import (
     AudioChunkDataset,
+    CategoryRegistry,
     COCOAudioDataset,
+    COCODatasetBuilder,
     InMemoryChunkDataset,
     SplitConfig,
     collate_detections,
+    convert_audio_to_coco,
     create_train_val_test_loaders,
+    parse_frequency_bins,
     split_dataset,
+    validate_coco_dataset,
 )
 from rf_detr_finetuning.dataprocessor import (
     # Preprocessing
@@ -100,6 +64,8 @@ from rf_detr_finetuning.dataprocessor import (
     # Features
     compute_mel_spectrogram,
     compute_mel_spectrogram_db,
+    # Visualization
+    draw_bboxes_on_spectrogram,
     extract_audio_chunk,
     flip_spectrogram,
     grayscale_to_rgb,
@@ -178,6 +144,11 @@ __all__ = [
     "SplitConfig",
     "split_dataset",
     "create_train_val_test_loaders",
+    "validate_coco_dataset",
+    "parse_frequency_bins",
+    "CategoryRegistry",
+    "COCODatasetBuilder",
+    "convert_audio_to_coco",
     # Training
     "TrainerConfig",
     "Trainer",
@@ -201,21 +172,10 @@ __all__ = [
     "PostProcessorConfig",
     "windows_to_events",
     # ==========================================================================
-    # Legacy API (backward compatibility)
+    # Deprecated (will be removed in v0.3.0)
     # ==========================================================================
     "convert_yolo_to_coco",
-    "convert_audio_to_coco",
-    "AudioMetadata",
-    "BboxFrequencyInfo",
-    "BoundingBox",
-    "CategoryRegistry",
-    "COCODataset",
-    "FrequencyMapper",
-    "SpectrogramConfig",
-    "TimeMapper",
-    "decode_bbox_to_frequency",
-    "infer_frequency_bins_from_data",
-    "draw_bboxes_on_spectrogram",
     "finetune_model",
     "prediction",
+    "draw_bboxes_on_spectrogram",
 ]

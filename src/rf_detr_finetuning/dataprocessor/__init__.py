@@ -57,6 +57,9 @@ from rf_detr_finetuning.dataprocessor.preprocessing import (
     normalize_spectrogram,
     preprocess_audio,
 )
+from rf_detr_finetuning.dataprocessor.visualization import (
+    draw_bboxes_on_spectrogram,
+)
 
 __all__ = [
     # I/O
@@ -101,6 +104,8 @@ __all__ = [
     "random_gain",
     "spec_augment",
     "mixup_audio",
+    # Visualization
+    "draw_bboxes_on_spectrogram",
 ]
 
 __all__ = [
