@@ -1029,6 +1029,7 @@ class EvaluateStep(PipelineStep):
             sorted_categories = sorted(coco_data["categories"], key=lambda x: x["id"])
             class_names = [c["name"] for c in sorted_categories]
             idx_to_category_id = {idx: c["id"] for idx, c in enumerate(sorted_categories)}
+            valid_category_ids = {c["id"] for c in sorted_categories}
 
             # Initialize predictor
             predictor = RFDETRPredictor(
@@ -1076,6 +1077,8 @@ class EvaluateStep(PipelineStep):
                     # Store predictions
                     for det in result.detections:
                         category_id = idx_to_category_id.get(det.class_id)
+                        if category_id is None and det.class_id in valid_category_ids:
+                            category_id = det.class_id
                         if category_id is None:
                             continue
                         predictions.append(
