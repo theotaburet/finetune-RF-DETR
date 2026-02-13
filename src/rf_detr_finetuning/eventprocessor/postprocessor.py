@@ -15,6 +15,8 @@ from typing import Any
 
 from rf_detr_finetuning.eventprocessor.event import AudioEvent, EventList
 from rf_detr_finetuning.eventprocessor.merger import (
+    ClassWiseMergeConfig,
+    ClassWiseMerger,
     EventMerger,
     MergeConfig,
 )
@@ -38,8 +40,13 @@ class PostProcessorConfig:
         confidence_threshold: Minimum detection confidence.
         min_event_duration_ms: Minimum event duration to keep.
         max_event_duration_ms: Maximum event duration (None = no limit).
-        merge_config: Event merging configuration.
+        merge_config: Event merging configuration (IoU-based).
+        class_wise_merge_config: Class-wise merge config (Delta_Time/HZ-based).
         class_names: Mapping of class IDs to names.
+
+    Note:
+        Only one of merge_config or class_wise_merge_config should be provided.
+        If class_wise_merge_config is set, it takes precedence.
 
     """
 
@@ -51,6 +58,7 @@ class PostProcessorConfig:
     min_event_duration_ms: float = 0.0
     max_event_duration_ms: float | None = None
     merge_config: MergeConfig = field(default_factory=MergeConfig)
+    class_wise_merge_config: ClassWiseMergeConfig | None = None
     class_names: dict[int, str] = field(default_factory=dict)
 
 
@@ -76,7 +84,14 @@ class EventPostProcessor:
 
         """
         self.config = config or PostProcessorConfig()
-        self.merger = EventMerger(self.config.merge_config)
+
+        # Use class-wise merger if configured, otherwise fall back to IoU-based
+        if self.config.class_wise_merge_config is not None:
+            self.merger = ClassWiseMerger(self.config.class_wise_merge_config)
+            logger.debug("Using ClassWiseMerger (Delta_Time/HZ-based)")
+        else:
+            self.merger = EventMerger(self.config.merge_config)
+            logger.debug("Using EventMerger (IoU-based)")
 
     def process(
         self,

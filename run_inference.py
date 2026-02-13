@@ -28,6 +28,11 @@ from rich.console import Console
 from rich.logging import RichHandler
 from rich.table import Table
 
+from rf_detr_finetuning.eventprocessor.merger import (
+    ClassMergeParams,
+    ClassWiseMergeConfig,
+)
+
 # Configure logging with Rich
 logging.basicConfig(
     level=logging.INFO,
@@ -101,6 +106,11 @@ def parse_args() -> argparse.Namespace:
         default=0.5,
         help="IoU threshold for NMS merging",
     )
+    parser.add_argument(
+        "--merge-config",
+        type=Path,
+        help="Event merging configuration YAML (uses class-wise merging if provided)",
+    )
 
     # Output settings
     parser.add_argument(
@@ -173,6 +183,52 @@ def load_class_names(args: argparse.Namespace) -> list[str] | None:
             return [cat["name"] for cat in data["categories"]]
 
     return None
+
+
+def _parse_class_wise_merge_config(config_data: dict) -> ClassWiseMergeConfig:
+    """Parse class-wise merge configuration from dict.
+
+    Args:
+        config_data: Configuration dictionary from YAML.
+
+    Returns:
+        ClassWiseMergeConfig instance.
+
+    """
+    # Parse default params
+    default_data = config_data.get("default", {})
+    default_params = ClassMergeParams(
+        delta_time_ms=default_data.get("delta_time_ms", 500.0),
+        delta_freq_hz=default_data.get("delta_freq_hz", 500.0),
+        min_overlap_ratio=default_data.get("min_overlap_ratio"),
+        score_strategy=default_data.get("score_strategy", "max"),
+    )
+
+    # Parse class-specific params
+    class_params = {}
+    classes_data = config_data.get("classes", {})
+    for class_id_str, class_data in classes_data.items():
+        class_id = int(class_id_str)
+        class_params[class_id] = ClassMergeParams(
+            delta_time_ms=class_data.get("delta_time_ms", default_params.delta_time_ms),
+            delta_freq_hz=class_data.get("delta_freq_hz", default_params.delta_freq_hz),
+            min_overlap_ratio=class_data.get("min_overlap_ratio"),
+            score_strategy=class_data.get("score_strategy", default_params.score_strategy),
+        )
+
+    # Parse filtering params
+    filtering_data = config_data.get("filtering", {})
+    score_threshold = filtering_data.get("score_threshold", 0.0)
+    min_duration_ms = filtering_data.get("min_duration_ms", 0.0)
+    max_duration_ms = filtering_data.get("max_duration_ms")
+
+    return ClassWiseMergeConfig(
+        class_params=class_params,
+        default_params=default_params,
+        score_threshold=score_threshold,
+        min_duration_ms=min_duration_ms,
+        max_duration_ms=max_duration_ms,
+    )
 
 
 def run_image_inference(args: argparse.Namespace) -> int:
@@ -277,12 +333,27 @@ def run_audio_inference(args: argparse.Namespace) -> int:
     fft_config = config.get("fft", {})
     time_per_pixel_ms = fft_config.get("hop_ms", 10.0)
 
-    post_config = PostProcessorConfig(
-        time_per_pixel_ms=time_per_pixel_ms,
-        confidence_threshold=args.confidence,
-        merge_config=MergeConfig(iou_threshold=args.iou_threshold),
-        class_names={i: name for i, name in enumerate(class_names)} if class_names else {},
-    )
+    # Load class-wise merge config if provided
+    if args.merge_config and args.merge_config.exists():
+        console.print(f"[cyan]Loading merge config:[/cyan] {args.merge_config}")
+        with open(args.merge_config) as f:
+            merge_config_data = yaml.safe_load(f)
+        class_wise_config = _parse_class_wise_merge_config(merge_config_data)
+
+        post_config = PostProcessorConfig(
+            time_per_pixel_ms=time_per_pixel_ms,
+            confidence_threshold=args.confidence,
+            class_wise_merge_config=class_wise_config,
+            class_names={i: name for i, name in enumerate(class_names)} if class_names else {},
+        )
+    else:
+        # Use traditional IoU-based merging
+        post_config = PostProcessorConfig(
+            time_per_pixel_ms=time_per_pixel_ms,
+            confidence_threshold=args.confidence,
+            merge_config=MergeConfig(iou_threshold=args.iou_threshold),
+            class_names={i: name for i, name in enumerate(class_names)} if class_names else {},
+        )
     post_processor = EventPostProcessor(post_config)
 
     all_results = []

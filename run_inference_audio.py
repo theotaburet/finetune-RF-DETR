@@ -129,6 +129,11 @@ def parse_args() -> argparse.Namespace:
         help="Maximum gap (ms) for temporal merging",
     )
     proc_group.add_argument(
+        "--merge-config",
+        type=Path,
+        help="Event merging configuration YAML (uses class-wise merging if provided)",
+    )
+    proc_group.add_argument(
         "--min-event-duration-ms",
         type=float,
         default=0.0,
@@ -317,6 +322,7 @@ class AudioInferencePipeline:
         iou_threshold: float = 0.5,
         merge_gap_ms: float = 100.0,
         min_event_duration_ms: float = 0.0,
+        merge_config_path: Path | None = None,
     ) -> None:
         """Initialize the inference pipeline.
 
@@ -330,6 +336,7 @@ class AudioInferencePipeline:
             iou_threshold: IoU threshold for NMS.
             merge_gap_ms: Gap tolerance for temporal merging.
             min_event_duration_ms: Minimum event duration.
+            merge_config_path: Optional path to class-wise merge config YAML.
 
         """
         self.weights_path = weights_path
@@ -341,6 +348,7 @@ class AudioInferencePipeline:
         self.iou_threshold = iou_threshold
         self.merge_gap_ms = merge_gap_ms
         self.min_event_duration_ms = min_event_duration_ms
+        self.merge_config_path = merge_config_path
 
         # Load components
         self._init_chunker()
@@ -385,25 +393,93 @@ class AudioInferencePipeline:
             PostProcessorConfig,
         )
 
-        merge_config = MergeConfig(
-            iou_threshold=self.iou_threshold,
-            score_threshold=self.confidence_threshold,
-            merge_same_class_only=True,
-            merge_strategy="max",
-            gap_tolerance_ms=self.merge_gap_ms,
-        )
-
         class_names_dict = {i: name for i, name in enumerate(self.class_names)}
 
-        self.postproc_config = PostProcessorConfig(
-            time_per_pixel_ms=self.fft_config.hop_ms,
-            confidence_threshold=self.confidence_threshold,
-            min_event_duration_ms=self.min_event_duration_ms,
-            merge_config=merge_config,
-            class_names=class_names_dict,
-        )
+        # Load class-wise merge config if provided, otherwise use IoU-based merging
+        if self.merge_config_path and self.merge_config_path.exists():
+            logger.info(f"Loading class-wise merge config from {self.merge_config_path}")
+            import yaml
+
+            with open(self.merge_config_path) as f:
+                merge_config_data = yaml.safe_load(f)
+            class_wise_config = self._parse_class_wise_merge_config(merge_config_data)
+
+            self.postproc_config = PostProcessorConfig(
+                time_per_pixel_ms=self.fft_config.hop_ms,
+                confidence_threshold=self.confidence_threshold,
+                min_event_duration_ms=self.min_event_duration_ms,
+                class_wise_merge_config=class_wise_config,
+                class_names=class_names_dict,
+            )
+        else:
+            # Use traditional IoU-based merging
+            merge_config = MergeConfig(
+                iou_threshold=self.iou_threshold,
+                score_threshold=self.confidence_threshold,
+                merge_same_class_only=True,
+                merge_strategy="max",
+                gap_tolerance_ms=self.merge_gap_ms,
+            )
+
+            self.postproc_config = PostProcessorConfig(
+                time_per_pixel_ms=self.fft_config.hop_ms,
+                confidence_threshold=self.confidence_threshold,
+                min_event_duration_ms=self.min_event_duration_ms,
+                merge_config=merge_config,
+                class_names=class_names_dict,
+            )
 
         self.postprocessor = EventPostProcessor(self.postproc_config)
+
+    def _parse_class_wise_merge_config(self, config_data: dict) -> Any:
+        """Parse class-wise merge configuration from dict.
+
+        Args:
+            config_data: Configuration dictionary from YAML.
+
+        Returns:
+            ClassWiseMergeConfig instance.
+
+        """
+        from rf_detr_finetuning.eventprocessor.merger import (
+            ClassMergeParams,
+            ClassWiseMergeConfig,
+        )
+
+        # Parse default params
+        default_data = config_data.get("default", {})
+        default_params = ClassMergeParams(
+            delta_time_ms=default_data.get("delta_time_ms", 500.0),
+            delta_freq_hz=default_data.get("delta_freq_hz", 500.0),
+            min_overlap_ratio=default_data.get("min_overlap_ratio"),
+            score_strategy=default_data.get("score_strategy", "max"),
+        )
+
+        # Parse class-specific params
+        class_params = {}
+        classes_data = config_data.get("classes", {})
+        for class_id_str, class_data in classes_data.items():
+            class_id = int(class_id_str)
+            class_params[class_id] = ClassMergeParams(
+                delta_time_ms=class_data.get("delta_time_ms", default_params.delta_time_ms),
+                delta_freq_hz=class_data.get("delta_freq_hz", default_params.delta_freq_hz),
+                min_overlap_ratio=class_data.get("min_overlap_ratio"),
+                score_strategy=class_data.get("score_strategy", default_params.score_strategy),
+            )
+
+        # Parse filtering params
+        filtering_data = config_data.get("filtering", {})
+        score_threshold = filtering_data.get("score_threshold", 0.0)
+        min_duration_ms = filtering_data.get("min_duration_ms", 0.0)
+        max_duration_ms = filtering_data.get("max_duration_ms")
+
+        return ClassWiseMergeConfig(
+            class_params=class_params,
+            default_params=default_params,
+            score_threshold=score_threshold,
+            min_duration_ms=min_duration_ms,
+            max_duration_ms=max_duration_ms,
+        )
 
     def process_audio(
         self,
@@ -664,6 +740,7 @@ def main() -> int:
             iou_threshold=args.iou_threshold,
             merge_gap_ms=args.merge_gap_ms,
             min_event_duration_ms=args.min_event_duration_ms,
+            merge_config_path=args.merge_config,
         )
     except Exception as e:
         console.print(f"[red]Error initializing pipeline:[/red] {e}")
