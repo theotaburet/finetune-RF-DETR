@@ -14,6 +14,9 @@ from rf_detr_finetuning.eventprocessor.event import (
     EventList,
 )
 from rf_detr_finetuning.eventprocessor.merger import (
+    ClassMergeParams,
+    ClassWiseMergeConfig,
+    ClassWiseMerger,
     EventMerger,
     MergeConfig,
     nms_merge,
@@ -34,6 +37,10 @@ __all__ = [
     "EventMerger",
     "nms_merge",
     "temporal_merge",
+    # Class-wise merging
+    "ClassMergeParams",
+    "ClassWiseMergeConfig",
+    "ClassWiseMerger",
     # Post-processing
     "PostProcessorConfig",
     "EventPostProcessor",

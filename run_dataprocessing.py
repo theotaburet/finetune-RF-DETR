@@ -81,6 +81,11 @@ def parse_args() -> argparse.Namespace:
         type=Path,
         help="Single metadata JSON file",
     )
+    input_group.add_argument(
+        "--allow-no-metadata",
+        action="store_true",
+        help="Process audio files without metadata JSON (for inference/prediction)",
+    )
 
     # Output options
     output_group = parser.add_argument_group("Output")
@@ -251,9 +256,9 @@ def load_config(args: argparse.Namespace) -> tuple[Any, Any, Any]:
         )
 
     preproc_config = PreprocessingConfig(
-        agc=agc_config,
+        agc=agc_config if agc_config else AGCConfig(enabled=False),
         detrend=args.detrend,
-        preemphasis_coef=args.preemphasis if args.preemphasis > 0 else None,
+        preemphasis=args.preemphasis if args.preemphasis > 0 else 0.0,
     )
 
     return fft_config, chunk_config, preproc_config
@@ -264,7 +269,8 @@ def find_audio_metadata_pairs(
     audio_file: Path | None,
     metadata_dir: Path | None,
     metadata_file: Path | None,
-) -> list[tuple[Path, Path]]:
+    allow_no_metadata: bool = False,
+) -> list[tuple[Path, Path | None]]:
     """Find matching audio and metadata file pairs.
 
     Args:
@@ -272,17 +278,28 @@ def find_audio_metadata_pairs(
         audio_file: Single audio file.
         metadata_dir: Directory of metadata files.
         metadata_file: Single metadata file.
+        allow_no_metadata: If True, include audio files without metadata.
 
     Returns:
-        List of (audio_path, metadata_path) tuples.
+        List of (audio_path, metadata_path) tuples. metadata_path is None if no
+        metadata found and allow_no_metadata is True.
 
     """
     pairs = []
 
-    if audio_file and metadata_file:
+    if audio_file:
         # Single file mode
-        if audio_file.exists() and metadata_file.exists():
+        if not audio_file.exists():
+            logger.error(f"Audio file not found: {audio_file}")
+            return pairs
+
+        if metadata_file and metadata_file.exists():
             pairs.append((audio_file, metadata_file))
+        elif allow_no_metadata:
+            pairs.append((audio_file, None))
+            logger.warning(f"Processing {audio_file.name} without metadata")
+        else:
+            logger.error(f"Metadata file not found: {metadata_file}")
         return pairs
 
     if not audio_dir or not audio_dir.exists():
@@ -310,6 +327,9 @@ def find_audio_metadata_pairs(
 
         if metadata_path:
             pairs.append((audio_path, metadata_path))
+        elif allow_no_metadata:
+            pairs.append((audio_path, None))
+            logger.warning(f"Processing {audio_path.name} without metadata")
         else:
             logger.warning(f"No metadata found for {audio_path.name}")
 
@@ -402,11 +422,13 @@ def save_debug_visualization(
         class_names: Optional class ID to name mapping.
 
     """
-    from rf_detr_finetuning.audio_chunking import draw_bboxes_on_spectrogram
+    from rf_detr_finetuning.dataprocessor.visualization import draw_bboxes_on_spectrogram
 
     # Draw bboxes on spectrogram
-    img = draw_bboxes_on_spectrogram(spectrogram, bboxes, class_names=class_names)
-    img.save(output_path)
+    img_array = draw_bboxes_on_spectrogram(spectrogram, bboxes, class_names=class_names)
+
+    # Convert numpy array to PIL Image and save
+    Image.fromarray(img_array).save(output_path)
 
 
 def build_coco_dataset(
@@ -485,6 +507,11 @@ def main() -> int:
         f"[cyan]Chunk config:[/cyan] window={chunk_config.window_duration_ms}ms, overlap={chunk_config.overlap_ratio}"
     )
     console.print(f"[cyan]Target size:[/cyan] {chunk_config.target_width}x{chunk_config.target_height}")
+    if preproc_config:
+        console.print(
+            f"[cyan]Preprocessing:[/cyan] detrend={preproc_config.detrend}, "
+            f"preemphasis={preproc_config.preemphasis}, agc={preproc_config.agc.enabled}"
+        )
     console.print()
 
     # Find audio-metadata pairs
@@ -493,6 +520,7 @@ def main() -> int:
         args.audio,
         args.metadata_dir,
         args.metadata,
+        allow_no_metadata=args.allow_no_metadata,
     )
 
     if not pairs:
@@ -502,7 +530,16 @@ def main() -> int:
     if args.max_files:
         pairs = pairs[: args.max_files]
 
-    console.print(f"[green]Found {len(pairs)} audio files with metadata[/green]\n")
+    metadata_count = sum(1 for _, m in pairs if m is not None)
+    no_metadata_count = len(pairs) - metadata_count
+    if no_metadata_count > 0:
+        msg = (
+            f"[green]Found {len(pairs)} audio files[/green] "
+            f"({metadata_count} with metadata, {no_metadata_count} without)\n"
+        )
+        console.print(msg)
+    else:
+        console.print(f"[green]Found {len(pairs)} audio files with metadata[/green]\n")
 
     # Create output directories
     output_dir = args.output_dir
@@ -540,12 +577,21 @@ def main() -> int:
             progress.update(task, description=f"Processing {audio_path.name}...")
 
             try:
-                # Load events
-                raw_events = load_events_from_metadata(metadata_path)
+                # Load events (if metadata available)
+                raw_events = []
+                if metadata_path is not None:
+                    raw_events = load_events_from_metadata(metadata_path)
 
                 # Load audio
                 audio, sample_rate = load_audio_file(audio_path)
                 fmax = chunker.fmax if chunker.fmax else sample_rate / 2
+
+                # Log FFT parameters for this sample rate (first file only)
+                if not hasattr(chunker, "_fft_params_logged"):
+                    n_fft = chunker.fft_config.get_n_fft(sample_rate)
+                    hop_length = chunker.fft_config.get_hop_length(sample_rate)
+                    logger.info(f"FFT params for {sample_rate}Hz: n_fft={n_fft}, hop_length={hop_length}")
+                    chunker._fft_params_logged = True
 
                 # Map events to chunker format with category IDs
                 events = []
