@@ -7,7 +7,7 @@ preprocess:
   audio_dir: /mnt/d/SoundBase/Sounds/SDK_test
   metadata_dir: /mnt/d/SoundBase/Sounds/SDK_test
   output_dir: data/processed
-  chunking_config: config/audio_chunking.yaml
+  chunking_config: config/chunking.yaml
   extensions:
   - .flac
   - .wav
@@ -51,7 +51,7 @@ infer:
   weights: output/checkpoint_best.pth
   audio_dir: data/inference
   output_dir: output/predictions
-  chunking_config: config/audio_chunking.yaml
+  chunking_config: config/chunking.yaml
   extensions:
   - .flac
   - .wav

@@ -136,7 +136,7 @@ The project includes a sophisticated audio chunking module (`src/rf_detr_finetun
 **Configuration Pattern:**
 
 ```yaml
-# config/audio_chunking.yaml
+# config/chunking.yaml
 fft:
   hop_ms: 10.0  # Time resolution (ms per pixel)
   fft_ms: 25.0
@@ -215,5 +215,5 @@ python -m rf_detr_finetuning chunk-audio \
   --audio-dir data/audio/ \
   --metadata-dir data/metadata/ \
   --output-dir data/chunks/ \
-  --config config/audio_chunking.yaml
+  --config config/chunking.yaml
 ```

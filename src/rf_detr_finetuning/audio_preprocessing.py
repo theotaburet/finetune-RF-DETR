@@ -495,7 +495,7 @@ class AudioPreprocessor:
     Use this class for consistent preprocessing across training and inference.
 
     Example:
-        >>> preprocessor = AudioPreprocessor.from_yaml("config/audio_chunking.yaml")
+        >>> preprocessor = AudioPreprocessor.from_yaml("config/chunking.yaml")
         >>> audio_processed, metadata = preprocessor.process(audio, sample_rate)
         >>> spec_normalized = preprocessor.normalize_spectrogram(spectrogram)
 

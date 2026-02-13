@@ -74,7 +74,7 @@ class PreprocessConfig:
     audio_dir: str = "data/audio"
     metadata_dir: str = "data/metadata"
     output_dir: str = "data/processed"
-    chunking_config: str = "config/audio_chunking.yaml"
+    chunking_config: str = "config/chunking.yaml"
     extensions: list[str] = field(default_factory=lambda: [".flac", ".wav", ".mp3"])
     recursive: bool = True  # Search subdirectories for audio files
     debug_visualize: bool = False
@@ -148,7 +148,7 @@ class InferConfig:
     weights: str = "output/checkpoint_best.pth"
     audio_dir: str = "data/inference"
     output_dir: str = "output/predictions"
-    chunking_config: str = "config/audio_chunking.yaml"
+    chunking_config: str = "config/chunking.yaml"
     extensions: list[str] = field(default_factory=lambda: [".flac", ".wav", ".mp3"])
     recursive: bool = True  # Search subdirectories for audio files
     confidence_threshold: float = 0.5

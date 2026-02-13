@@ -1,14 +1,21 @@
-"""Visualization of chunk detection merging strategy with class-wise parameters.
+"""Visualization of chunk detection merging strategy for marine acoustics.
 
 This script creates fake detection data across overlapping chunks to demonstrate
-the class-wise merging algorithm using Delta_Time (temporal) and Delta_Hz
-(frequency) parameters instead of IoU.
+the class-wise merging algorithm for underwater acoustic analysis using
+Delta_Time (temporal) and Delta_Hz (frequency) parameters.
 
 It visualizes:
 - Original chunks with detections
 - Merged detections after applying class-wise merging strategy
 - Color-coded by detection confidence
 - Frequency ranges for each detection
+
+Example marine species:
+- Humpback whale: Complex songs with frequency sweeps
+- Killer whale: Short pulsed calls and echolocation clicks
+- Blue whale: Very long, low-frequency calls
+- Dolphin: Rapid echolocation clicks
+- Ship noise: Continuous broadband anthropogenic noise
 
 """
 
@@ -61,17 +68,18 @@ class ChunkDetection:
 def create_fake_detections() -> list[ChunkDetection]:
     """Create fake detections across overlapping chunks.
 
-    Creates realistic scenario with different sound classes that have
-    different temporal and frequency characteristics:
-    - bird_call: Short duration, high frequency (2-4 kHz)
-    - engine_noise: Longer duration, low frequency (100-800 Hz)
-    - dog_bark: Medium duration, mid frequency (500-1500 Hz)
+    Creates realistic marine acoustic scenario with different species:
+    - humpback_whale: Complex songs with frequency sweeps (200-3500 Hz)
+    - killer_whale: Short pulsed calls and clicks (1-20 kHz)
+    - blue_whale: Very long, low-frequency calls (10-40 Hz)
+    - dolphin: Rapid echolocation clicks (up to 150 kHz)
+    - ship_noise: Continuous broadband anthropogenic noise (10 Hz - 5 kHz)
 
     """
     detections = []
 
     # Chunk 0: 0-3200ms
-    # bird_call at 500-1500ms (partial), engine_noise at 2000-2800ms
+    # Humpback whale song at 500-1500ms (partial), Ship noise at 2000-2800ms
     detections.append(
         ChunkDetection(
             chunk_id=0,
@@ -80,10 +88,10 @@ def create_fake_detections() -> list[ChunkDetection]:
             det_start_ms=500,
             det_end_ms=1500,
             class_id=0,
-            class_name="bird_call",
+            class_name="humpback_whale",
             score=0.85,
-            min_freq_hz=2000,
-            max_freq_hz=4000,
+            min_freq_hz=200,
+            max_freq_hz=3500,
         )
     )
     detections.append(
@@ -93,16 +101,16 @@ def create_fake_detections() -> list[ChunkDetection]:
             chunk_end_ms=3200,
             det_start_ms=2000,
             det_end_ms=2800,
-            class_id=1,
-            class_name="engine_noise",
+            class_id=4,
+            class_name="ship_noise",
             score=0.92,
-            min_freq_hz=100,
-            max_freq_hz=800,
+            min_freq_hz=50,
+            max_freq_hz=5000,
         )
     )
 
     # Chunk 1: 2560-5760ms (20% overlap with chunk 0)
-    # Same events continue in overlapping region
+    # Same humpback song continues, killer whale calls at different frequency
     detections.append(
         ChunkDetection(
             chunk_id=1,
@@ -111,10 +119,10 @@ def create_fake_detections() -> list[ChunkDetection]:
             det_start_ms=600,
             det_end_ms=1600,
             class_id=0,
-            class_name="bird_call",
+            class_name="humpback_whale",
             score=0.88,
-            min_freq_hz=2000,
-            max_freq_hz=4000,
+            min_freq_hz=200,
+            max_freq_hz=3500,
         )
     )
     detections.append(
@@ -122,18 +130,18 @@ def create_fake_detections() -> list[ChunkDetection]:
             chunk_id=1,
             chunk_start_ms=2560,
             chunk_end_ms=5760,
-            det_start_ms=2100,
-            det_end_ms=2900,
+            det_start_ms=3000,
+            det_end_ms=3800,
             class_id=1,
-            class_name="engine_noise",
+            class_name="killer_whale",
             score=0.89,
-            min_freq_hz=100,
-            max_freq_hz=800,
+            min_freq_hz=2000,
+            max_freq_hz=18000,
         )
     )
 
     # Chunk 2: 5120-8320ms (20% overlap with chunk 1)
-    # bird_call continues but at different frequency (overlaps freq gap)
+    # Blue whale call at very low frequency
     detections.append(
         ChunkDetection(
             chunk_id=2,
@@ -142,15 +150,29 @@ def create_fake_detections() -> list[ChunkDetection]:
             det_start_ms=700,
             det_end_ms=1400,
             class_id=0,
-            class_name="bird_call",
+            class_name="humpback_whale",
             score=0.75,
-            min_freq_hz=2000,
-            max_freq_hz=4000,
+            min_freq_hz=200,
+            max_freq_hz=3500,
+        )
+    )
+    detections.append(
+        ChunkDetection(
+            chunk_id=2,
+            chunk_start_ms=5120,
+            chunk_end_ms=8320,
+            det_start_ms=500,
+            det_end_ms=4500,
+            class_id=2,
+            class_name="blue_whale",
+            score=0.95,
+            min_freq_hz=10,
+            max_freq_hz=40,
         )
     )
 
     # Chunk 3: 7680-10880ms
-    # dog_bark at different frequency band
+    # Dolphin clicks at high frequency
     detections.append(
         ChunkDetection(
             chunk_id=3,
@@ -158,11 +180,11 @@ def create_fake_detections() -> list[ChunkDetection]:
             chunk_end_ms=10880,
             det_start_ms=900,
             det_end_ms=2500,
-            class_id=2,
-            class_name="dog_bark",
-            score=0.95,
-            min_freq_hz=500,
-            max_freq_hz=1500,
+            class_id=3,
+            class_name="dolphin",
+            score=0.93,
+            min_freq_hz=20000,
+            max_freq_hz=120000,
         )
     )
 
@@ -186,11 +208,13 @@ def visualize_detections(
     """
     fig, axes = plt.subplots(2, 1, figsize=(16, 10))
 
-    # Colors for different classes
+    # Colors for different classes (marine species)
     class_colors = {
-        0: "#3498db",  # Blue - bird_call
-        1: "#e74c3c",  # Red - engine_noise
-        2: "#2ecc71",  # Green - dog_bark
+        0: "#3498db",  # Blue - humpback_whale
+        1: "#e74c3c",  # Red - killer_whale
+        2: "#2ecc71",  # Green - blue_whale
+        3: "#f39c12",  # Orange - dolphin
+        4: "#9b59b6",  # Purple - ship_noise
     }
 
     # Top plot: Original chunk detections
@@ -246,7 +270,8 @@ def visualize_detections(
         mid_time = (det.det_start_ms + det.det_end_ms) / 2
         freq_info = ""
         if det.min_freq_hz is not None and det.max_freq_hz is not None:
-            freq_info = f"\n{det.min_freq_hz:.0f}-{det.max_freq_hz:.0f}Hz"
+            freq_str = f"{det.min_freq_hz:.0f}-{det.max_freq_hz:.0f}Hz"
+            freq_info = f"\n{freq_str}"
 
         ax1.text(
             mid_time,
@@ -267,9 +292,11 @@ def visualize_detections(
 
     # Legend for top plot
     legend_elements = [
-        mpatches.Patch(color=class_colors[0], label="bird_call (class 0)"),
-        mpatches.Patch(color=class_colors[1], label="engine_noise (class 1)"),
-        mpatches.Patch(color=class_colors[2], label="dog_bark (class 2)"),
+        mpatches.Patch(color=class_colors[0], label="humpback_whale (200-3500 Hz)"),
+        mpatches.Patch(color=class_colors[1], label="killer_whale (2-18 kHz)"),
+        mpatches.Patch(color=class_colors[2], label="blue_whale (10-40 Hz)"),
+        mpatches.Patch(color=class_colors[3], label="dolphin (20-120 kHz)"),
+        mpatches.Patch(color=class_colors[4], label="ship_noise (broadband)"),
     ]
     ax1.legend(handles=legend_elements, loc="upper right")
 
@@ -350,7 +377,7 @@ def visualize_detections(
 
         # Add class-wise config info if provided
         if class_configs:
-            config_text = "Class-wise Merge Config:\n"
+            config_text = "Class-wise Merge Config (Marine):\n"
             for class_id, params in sorted(class_configs.items()):
                 config_text += f"  Class {class_id}: Δt={params.delta_time_ms}ms, Δf={params.delta_freq_hz}Hz\n"
             ax2.text(
@@ -393,7 +420,7 @@ def print_detection_info(detections: list[ChunkDetection]) -> None:
 
     """
     print("\n" + "=" * 80)
-    print("RAW DETECTIONS ACROSS CHUNKS")
+    print("RAW DETECTIONS ACROSS CHUNKS (Marine Acoustic Scenario)")
     print("=" * 80)
 
     chunks = {}
@@ -428,7 +455,7 @@ def print_merged_info(events: EventList, num_raw_detections: int) -> None:
 
     """
     print("\n" + "=" * 80)
-    print("MERGED EVENTS")
+    print("MERGED EVENTS (Marine Acoustic Analysis)")
     print("=" * 80)
 
     for i, event in enumerate(events.events, 1):
@@ -452,10 +479,10 @@ def print_merged_info(events: EventList, num_raw_detections: int) -> None:
 
 
 def main() -> None:
-    """Run the visualization demo with class-wise merging."""
-    print("Class-wise Chunk Detection Merging Strategy Demo")
+    """Run the visualization demo with marine acoustic merging."""
+    print("Marine Acoustic Event Merging Strategy Demo")
     print("=" * 80)
-    print("Using Delta_Time (temporal) and Delta_Hz (frequency) instead of IoU")
+    print("Using Delta_Time (temporal) and Delta_Hz (frequency) for underwater sounds")
     print()
 
     # Create fake detections
@@ -465,45 +492,60 @@ def main() -> None:
     # Convert to EventList
     events = EventList(
         events=[det.to_event() for det in detections],
-        audio_path="fake_audio.wav",
+        audio_path="hydrophone_recording.flac",
         duration_ms=11000,
-        class_names={0: "bird_call", 1: "engine_noise", 2: "dog_bark"},
+        class_names={
+            0: "humpback_whale",
+            1: "killer_whale",
+            2: "blue_whale",
+            3: "dolphin",
+            4: "ship_noise",
+        },
     )
 
-    # Configure class-wise merging with different parameters per class
-    # bird_call: Short events, need tight temporal merging
-    # engine_noise: Long continuous sound, allow larger temporal gap
-    # dog_bark: Medium duration, strict frequency matching
+    # Configure class-wise merging for marine species
+    # Different parameters based on species' acoustic characteristics
     class_configs = {
         0: ClassMergeParams(
-            delta_time_ms=300,  # Merge if within 300ms
-            delta_freq_hz=500,  # Allow 500Hz frequency difference
+            delta_time_ms=3000,  # Humpback: Allow 3s gaps for continuous songs
+            delta_freq_hz=400,  # Moderate tolerance for frequency sweeps
             score_strategy="max",
         ),
         1: ClassMergeParams(
-            delta_time_ms=800,  # Merge if within 800ms (longer tolerance)
-            delta_freq_hz=200,  # Strict frequency match (engine has narrow band)
-            score_strategy="avg",
+            delta_time_ms=800,  # Killer whale: Tight tolerance for discrete calls
+            delta_freq_hz=600,  # Broadband clicks
+            score_strategy="max",
         ),
         2: ClassMergeParams(
-            delta_time_ms=500,  # Merge if within 500ms
-            delta_freq_hz=300,  # Moderate frequency tolerance
-            score_strategy="weighted",
+            delta_time_ms=8000,  # Blue whale: Very long tolerance (8s)
+            delta_freq_hz=30,  # Very narrow (infrasonic)
+            score_strategy="avg",
+        ),
+        3: ClassMergeParams(
+            delta_time_ms=400,  # Dolphin: Very tight for rapid clicks
+            delta_freq_hz=800,  # Wide frequency range
+            score_strategy="max",
+        ),
+        4: ClassMergeParams(
+            delta_time_ms=5000,  # Ship noise: Long tolerance for continuous noise
+            delta_freq_hz=100,  # Narrow band
+            score_strategy="avg",
         ),
     }
 
     merge_config = ClassWiseMergeConfig(
         class_params=class_configs,
         default_params=ClassMergeParams(
-            delta_time_ms=500,
-            delta_freq_hz=500,
+            delta_time_ms=2000,
+            delta_freq_hz=150,
             score_strategy="max",
         ),
-        score_threshold=0.0,
+        score_threshold=0.3,
+        min_duration_ms=200.0,
     )
 
     print("\n" + "=" * 80)
-    print("CLASS-WISE MERGE CONFIGURATION")
+    print("CLASS-WISE MERGE CONFIGURATION (Marine Acoustics)")
     print("=" * 80)
     print("Per-class merge parameters (Delta_Time, Delta_Hz):")
     for class_id, params in sorted(class_configs.items()):
@@ -523,39 +565,39 @@ def main() -> None:
     # Create visualization
     output_dir = Path("output/test_merging")
     output_dir.mkdir(parents=True, exist_ok=True)
-    output_path = output_dir / "class_wise_merging_visualization.png"
+    output_path = output_dir / "marine_acoustic_merging_visualization.png"
 
     visualize_detections(detections, merged_events, class_configs, str(output_path))
 
     print("\n" + "=" * 80)
-    print("CLASS-WISE MERGING STRATEGY SUMMARY")
+    print("MARINE ACOUSTIC MERGING STRATEGY SUMMARY")
     print("=" * 80)
     print("""
-Instead of IoU-based merging, we use class-specific parameters:
+Class-wise merging using Delta_Time and Delta_Hz is especially important
+for underwater acoustics because:
 
-1. For each class, define:
-   - Delta_Time (Δt): Maximum temporal distance to merge
-   - Delta_Hz (Δf): Maximum frequency distance to merge
-   - Score strategy: How to combine scores (max/avg/weighted)
+1. Different marine species occupy different frequency bands:
+   - Blue whales: 10-40 Hz (infrasonic)
+   - Humpback whales: 10 Hz - 4 kHz (complex songs)
+   - Killer whales: 1-20 kHz (pulsed calls)
+   - Dolphins: Up to 150 kHz (echolocation)
 
-2. Group events by class
+2. Temporal characteristics vary greatly:
+   - Blue whale calls: 10-30 seconds
+   - Humpback songs: Minutes with gaps
+   - Dolphin clicks: <1 ms bursts
+   - Ship noise: Continuous over minutes
 
-3. For each class:
-   - Sort by start time
-   - Iterate through events
-   - If next event is within Δt AND Δf, merge it
-   - Otherwise, start new group
+3. Frequency-aware merging prevents:
+   - Merging blue whale calls with ship noise
+   - Combining dolphin clicks with whale songs
+   - Mis-attributing sounds across species
 
-4. Merge groups:
-   - Union of temporal boundaries
-   - Union of frequency boundaries
-   - Apply score strategy
-
-Benefits over IoU-based merging:
-- Class-specific behavior (short vs long events)
-- Frequency-aware merging (important for multi-species audio)
-- More intuitive parameters (time/frequency rather than overlap ratio)
-- Better for sounds with different temporal characteristics
+Benefits for marine bioacoustics:
+- Species-specific merge tolerances
+- Frequency band isolation
+- Better preservation of call structure
+- Reduced false positives from overlapping chunks
 """)
 
 

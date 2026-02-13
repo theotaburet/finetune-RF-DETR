@@ -164,7 +164,7 @@ This section explains the **end-to-end journey** from raw audio files to trained
 6. **Bbox Creation**: Generate COCO-format bboxes `[x, y, width, height]`
 7. **Filtering**: Drop chunks with insufficient content (< 50% non-padding)
 
-**Key Configuration** (`config/audio_chunking.yaml`):
+**Key Configuration** (`config/chunking.yaml`):
 
 ```yaml
 fft:
@@ -286,7 +286,7 @@ ______________________________________________________________________
 python run_inference_audio.py \
   --audio data/test_audio/whale_recording.flac \
   --weights output/checkpoint_best.pth \
-  --config config/audio_chunking.yaml \
+  --config config/chunking.yaml \
   --output results/whale_events.json \
   --visualize
 
@@ -294,7 +294,7 @@ python run_inference_audio.py \
 python run_inference_audio.py \
   --audio-dir data/test_audio/ \
   --weights output/checkpoint_best.pth \
-  --config config/audio_chunking.yaml \
+  --config config/chunking.yaml \
   --output-dir results/ \
   --confidence 0.5
 ```
@@ -351,7 +351,7 @@ preprocess:
   audio_dir: data/audio
   metadata_dir: data/metadata
   output_dir: data/processed
-  chunking_config: config/audio_chunking.yaml
+  chunking_config: config/chunking.yaml
 
 split:
   enabled: true
@@ -761,7 +761,7 @@ finetune-RF-DETR/
 │   └── CONTRIBUTING.md            # Contribution guidelines
 │
 ├── config/                        # Configuration files
-│   ├── audio_chunking.yaml        # Audio preprocessing config
+│   ├── chunking.yaml        # Audio preprocessing config
 │   ├── pipeline.yaml              # Full pipeline config
 │   └── audio_train.yaml           # Training hyperparameters
 │
@@ -927,7 +927,7 @@ preprocess:
   audio_dir: data/audio
   metadata_dir: data/metadata
   output_dir: data/processed
-  chunking_config: config/audio_chunking.yaml
+  chunking_config: config/chunking.yaml
 
 split:
   input_dir: data/processed
@@ -987,7 +987,7 @@ Detect events in new audio:
 python run_inference_audio.py \
   --audio data/test_audio/new_whale.flac \
   --weights output/checkpoint_best.pth \
-  --config config/audio_chunking.yaml \
+  --config config/chunking.yaml \
   --output results/new_whale_events.json \
   --visualize \
   --confidence 0.5
@@ -1093,7 +1093,7 @@ from rf_detr_finetuning.dataprocessor import (
     load_chunking_config_from_yaml,
 )
 
-config = load_chunking_config_from_yaml("config/audio_chunking.yaml")
+config = load_chunking_config_from_yaml("config/chunking.yaml")
 chunker = AudioChunker(config)
 
 audio_dir = Path("data/raw_audio")
@@ -1553,7 +1553,7 @@ from rf_detr_finetuning.dataprocessor import (
 )
 
 # Load configuration
-config = load_chunking_config_from_yaml("config/audio_chunking.yaml")
+config = load_chunking_config_from_yaml("config/chunking.yaml")
 
 # Create chunker
 chunker = AudioChunker(
@@ -1655,7 +1655,7 @@ base_pred = RFDETRPredictor(
 
 # Wrap with audio capabilities
 audio_pred = AudioPredictor.from_config(
-    predictor=base_pred, chunking_config_path="config/audio_chunking.yaml"
+    predictor=base_pred, chunking_config_path="config/chunking.yaml"
 )
 
 # Predict on audio file
@@ -1722,7 +1722,7 @@ rgb = grayscale_to_rgb(normalized.astype(np.uint8))
 
 ## Configuration Reference ⚙️
 
-### Audio Chunking Config (`audio_chunking.yaml`)
+### Audio Chunking Config (`chunking.yaml`)
 
 Complete reference for all chunking parameters:
 
@@ -1777,7 +1777,7 @@ preprocess:
   audio_dir: data/audio
   metadata_dir: data/metadata
   output_dir: data/processed
-  chunking_config: config/audio_chunking.yaml
+  chunking_config: config/chunking.yaml
   extensions: [".flac", ".wav", ".mp3"]
   recursive: true          # Search subdirectories
   debug_visualize: false   # Save debug images

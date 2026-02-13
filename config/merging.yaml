@@ -1,76 +1,79 @@
-# Event Merging Configuration
+# Event Merging Configuration for Underwater Acoustics
 # Controls how detections from overlapping chunks are merged into coherent events
+# Optimized for marine mammals, fish, and anthropogenic sounds
 
 # Default merge parameters (applied to all classes unless overridden)
 default:
   # Maximum temporal distance to merge events (milliseconds)
-  # Events within this time window will be considered for merging
-  delta_time_ms: 500.0
+  # Underwater sounds often have longer durations and slower repetition rates
+  delta_time_ms: 2000.0
 
   # Maximum frequency distance to merge events (Hz)
-  # Events within this frequency window will be considered for merging
-  delta_freq_hz: 500.0
+  # Marine sounds typically span narrower frequency bands
+  delta_freq_hz: 150.0
 
   # Alternative: use overlap ratio instead of delta_time_ms
-  # Set to null to use delta_time_ms, or a value (0.0-1.0) for overlap-based merging
   min_overlap_ratio: null
 
   # Score combination strategy
-  # - "max": Take maximum score from merged events
-  # - "avg": Average scores
-  # - "weighted": Weight by duration
   score_strategy: "max"
 
-# Class-specific merge parameters
-# Each class can have different merge behavior based on sound characteristics
+# Class-specific merge parameters for marine species
 classes:
-  # bird_call: Short, distinct calls with tight temporal requirements
+  # Humpback whale: Complex songs with frequency sweeps (10 Hz - 4 kHz)
+  # Long continuous phrases that may have gaps
   0:
-    delta_time_ms: 300
-    delta_freq_hz: 500
-    min_overlap_ratio: null
+    delta_time_ms: 3000       # Allow 3s gaps for continuous songs
+    delta_freq_hz: 400        # Tolerance for frequency sweeps
     score_strategy: "max"
 
-  # engine_noise: Long continuous sound, allow larger temporal gaps
+  # Killer whale: Pulsed calls and echolocation clicks (1-20 kHz)
+  # Short discrete calls, tight temporal grouping
   1:
-    delta_time_ms: 800
-    delta_freq_hz: 200
-    min_overlap_ratio: null
+    delta_time_ms: 800        # Tight tolerance for discrete calls
+    delta_freq_hz: 600        # Broadband clicks
+    score_strategy: "max"
+
+  # Blue whale: Very long, infrasonic calls (10-40 Hz)
+  # Long duration, extremely low frequency
+  2:
+    delta_time_ms: 8000       # Very long tolerance (8s)
+    delta_freq_hz: 30         # Very narrow frequency band
     score_strategy: "avg"
 
-  # dog_bark: Medium duration sounds
-  2:
-    delta_time_ms: 500
-    delta_freq_hz: 300
-    min_overlap_ratio: null
+  # Dolphin: Echolocation clicks and whistles (up to 150 kHz)
+  # Rapid clicks, very short duration
+  3:
+    delta_time_ms: 400        # Very tight for rapid clicks
+    delta_freq_hz: 800        # Wide frequency range
+    score_strategy: "max"
+
+  # Ship noise: Continuous broadband anthropogenic noise
+  # Long duration, may vary slowly
+  4:
+    delta_time_ms: 5000       # Long tolerance for continuous noise
+    delta_freq_hz: 100        # Narrow band
+    score_strategy: "avg"
+
+  # Fish chorus: Rhythmic, repetitive grunts/knocks
+  # Moderate duration, rhythmic patterns
+  5:
+    delta_time_ms: 2000
+    delta_freq_hz: 200
     score_strategy: "weighted"
 
 # Post-merge filtering
 filtering:
-  # Minimum score to keep merged events (0.0-1.0)
-  score_threshold: 0.0
+  # Minimum score to keep merged events
+  score_threshold: 0.3
 
-  # Minimum event duration in milliseconds
-  min_duration_ms: 0.0
+  # Minimum event duration (marine sounds are often >200ms)
+  min_duration_ms: 200.0
 
-  # Maximum event duration in milliseconds (null = no limit)
+  # Maximum event duration (null = no limit)
   max_duration_ms: null
 
-# Input/Output settings
-input:
-  # Path to input events JSON file (COCO format or EventList format)
-  # Can be single file or directory
-  events_file: null
-
-  # Alternative: provide predictions from inference
-  predictions_file: null
-
 output:
-  # Output directory for merged events
   output_dir: "output/merged_events"
-
-  # Output format
-  format: "json"  # Options: json, csv
-
-  # Save visualization
+  format: "json"
   save_visualization: true

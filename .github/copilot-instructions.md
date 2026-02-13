@@ -158,7 +158,7 @@ src/rf_detr_finetuning/
 └── predict.py             # Inference
 
 config/
-└── audio_chunking.yaml    # Chunking configuration
+└── chunking.yaml    # Chunking configuration
 
 tests/
 └── test_audio_chunking.py # 40 unit tests
@@ -196,7 +196,7 @@ python -m rf_detr_finetuning chunk-audio \
   --audio-dir data/audio/ \
   --metadata-dir data/metadata/ \
   --output-dir data/chunks/ \
-  --config config/audio_chunking.yaml
+  --config config/chunking.yaml
 
 # Training (existing)
 python -m rf_detr_finetuning train --config config/train.yaml

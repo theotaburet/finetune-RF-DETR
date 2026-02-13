@@ -9,7 +9,7 @@ Usage:
     python run_inference.py --image-dir data/test_spectrograms/ --weights model.pth
 
     # Inference on audio file
-    python run_inference.py --audio path/to/audio.flac --chunking-config config/audio_chunking.yaml
+    python run_inference.py --audio path/to/audio.flac --chunking-config config/chunking.yaml
 
     # Batch inference on audio files
     python run_inference.py --audio-dir data/audio/ --output results.json

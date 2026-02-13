@@ -10,7 +10,7 @@ Usage:
         --audio-dir data/audio/ \
         --metadata-dir data/metadata/ \
         --output-dir data/chunked_coco/ \
-        --config config/audio_chunking.yaml
+        --config config/chunking.yaml
 
     # Process single audio file
     python run_dataprocessing.py \

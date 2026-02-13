@@ -8,21 +8,21 @@ Usage:
     python run_inference_audio.py \
         --audio data/audio/sample.flac \
         --weights output/checkpoint_best.pth \
-        --config config/audio_chunking.yaml \
+        --config config/chunking.yaml \
         --output results/sample_events.json
 
     # Directory of audio files
     python run_inference_audio.py \
         --audio-dir data/audio/ \
         --weights output/checkpoint_best.pth \
-        --config config/audio_chunking.yaml \
+        --config config/chunking.yaml \
         --output-dir results/
 
     # With visualization
     python run_inference_audio.py \
         --audio data/audio/sample.flac \
         --weights output/checkpoint_best.pth \
-        --config config/audio_chunking.yaml \
+        --config config/chunking.yaml \
         --visualize --viz-dir output/viz/
 
 """
