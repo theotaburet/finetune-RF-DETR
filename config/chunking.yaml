@@ -16,7 +16,7 @@ fft:
   # Number of mel bands (spectrogram height before resize)
   # More bands = finer frequency resolution
   # Recommended: 64-256
-  n_mels: 256 # TODO we might try 256 later for better freq resolution
+  n_mels: 256 # TODO we might try 128/256 later for better freq resolution
 
 # Chunking Configuration
 chunking:

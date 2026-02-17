@@ -1,6 +1,15 @@
 name: rf_detr_pipeline
 description: RF-DETR Audio Event Detection Pipeline
+
+# Class names - ORDER MATTERS! Index = Class ID (0-based)
+# Example for marine acoustics:
+# class_names: ["humpback_whale", "killer_whale", "blue_whale", "dolphin", "ship_noise", "fish_chorus"]
+#   → humpback_whale = class 0, killer_whale = class 1, etc.
+#
+# These MUST match the classes in merging.yaml (e.g., classes.0, classes.1)
 class_names: []
+
+# Alternative: load from COCO categories file
 classes_file: null
 preprocess:
   enabled: false

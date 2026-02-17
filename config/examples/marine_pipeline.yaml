@@ -1,0 +1,47 @@
+# Example pipeline configuration for marine acoustic analysis
+name: marine_acoustic_pipeline
+description: RF-DETR Marine Acoustic Detection Pipeline
+
+# Class names - ORDER MATTERS! Index = Class ID (0-based)
+# These MUST match the integer keys in config/merging.yaml
+class_names:
+  - humpback_whale     # class_id = 0
+  - killer_whale       # class_id = 1
+  - blue_whale         # class_id = 2
+  - dolphin            # class_id = 3
+  - ship_noise         # class_id = 4
+  - fish_chorus        # class_id = 5
+
+preprocess:
+  enabled: true
+  audio_dir: data/hydrophone/
+  metadata_dir: data/annotations/
+  output_dir: data/processed
+  chunking_config: config/audio_chunking.yaml
+  extensions:
+    - .flac
+    - .wav
+  recursive: true
+
+split:
+  enabled: true
+  input_dir: data/processed
+  output_dir: data/split_dataset
+  train_ratio: 0.7
+  val_ratio: 0.2
+  test_ratio: 0.1
+
+train:
+  enabled: true
+  dataset_dir: data/split_dataset
+  output_dir: output/
+  model_size: base
+  epochs: 50
+  batch_size: 8
+
+infer:
+  enabled: false
+  weights: output/checkpoint_best.pth
+  audio_dir: data/inference/
+  output_dir: output/predictions/
+  merge_config: config/merging.yaml

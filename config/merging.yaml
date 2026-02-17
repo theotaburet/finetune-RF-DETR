@@ -1,6 +1,15 @@
 # Event Merging Configuration for Underwater Acoustics
 # Controls how detections from overlapping chunks are merged into coherent events
 # Optimized for marine mammals, fish, and anthropogenic sounds
+#
+# IMPORTANT: The class IDs here (0, 1, 2, etc.) MUST match the class_names
+# order in config/pipeline.yaml and the model's output classes.
+#
+# Example mapping:
+#   pipeline.yaml: class_names: ["humpback_whale", "killer_whale", "blue_whale"]
+#   merging.yaml:  classes.0 = humpback_whale, classes.1 = killer_whale, etc.
+#
+# The integer keys in 'classes:' below correspond to the index in class_names.
 
 # Default merge parameters (applied to all classes unless overridden)
 default:
