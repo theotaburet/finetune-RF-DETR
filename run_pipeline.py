@@ -754,7 +754,6 @@ class SplitStep(PipelineStep):
 
             train_indices = set(indices[:n_train].tolist())
             val_indices = set(indices[n_train : n_train + n_val].tolist())
-            # test_indices not used - splitting handled by image_id mapping
 
             # Build image_id mapping
             id_to_idx = {img["id"]: i for i, img in enumerate(coco_data["images"])}

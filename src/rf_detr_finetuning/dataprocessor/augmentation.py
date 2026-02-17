@@ -166,27 +166,3 @@ def spec_augment(
         spec[:, t0 : t0 + t] = 0
 
     return spec
-
-
-def mixup_audio(
-    audio1: np.ndarray,
-    audio2: np.ndarray,
-    alpha: float = 0.5,
-) -> np.ndarray:
-    """Mix two audio samples (mixup augmentation).
-
-    Args:
-        audio1: First audio array
-        audio2: Second audio array
-        alpha: Mixing coefficient (0.5 = equal mix)
-
-    Returns:
-        Mixed audio
-
-    """
-    # Ensure same length
-    min_len = min(len(audio1), len(audio2))
-    audio1 = audio1[:min_len]
-    audio2 = audio2[:min_len]
-
-    return alpha * audio1 + (1 - alpha) * audio2

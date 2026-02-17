@@ -160,33 +160,6 @@ def normalize_to_range(
         return np.full_like(spec, (out_min + out_max) / 2)
 
 
-def apply_colormap(
-    spec: np.ndarray,
-    colormap: str = "viridis",
-) -> np.ndarray:
-    """Apply matplotlib colormap to spectrogram.
-
-    Args:
-        spec: Spectrogram array (H, W), expected 0-1 or will be normalized
-        colormap: Matplotlib colormap name
-
-    Returns:
-        RGB image array (H, W, 3) as uint8
-
-    """
-    import matplotlib.pyplot as plt
-
-    # Normalize if needed
-    if spec.max() > 1.0 or spec.min() < 0.0:
-        spec = normalize_to_range(spec, 0.0, 1.0)
-
-    cmap = plt.get_cmap(colormap)
-    rgba = cmap(spec)
-    rgb = (rgba[:, :, :3] * 255).astype(np.uint8)
-
-    return rgb
-
-
 def grayscale_to_rgb(spec: np.ndarray) -> np.ndarray:
     """Convert grayscale spectrogram to RGB.
 

@@ -12,7 +12,6 @@ This module handles all audio processing using ezakodio:
 
 from rf_detr_finetuning.dataprocessor.augmentation import (
     add_noise,
-    mixup_audio,
     random_gain,
     random_pad_position,
     random_time_shift,
@@ -103,31 +102,6 @@ __all__ = [
     "add_noise",
     "random_gain",
     "spec_augment",
-    "mixup_audio",
     # Visualization
     "draw_bboxes_on_spectrogram",
-]
-
-__all__ = [
-    # I/O
-    "load_audio_file",
-    # Features
-    "compute_mel_spectrogram",
-    # Preprocessing
-    "AGCConfig",
-    "DynamicRangeConfig",
-    "PreprocessingConfig",
-    "preprocess_audio",
-    "normalize_spectrogram",
-    # Chunking
-    "ChunkConfig",
-    "TimeBasedFFTConfig",
-    "AudioChunk",
-    "ChunkBbox",
-    "compute_chunk_boundaries",
-    "extract_audio_chunk",
-    "align_bbox_to_chunk",
-    # Normalization
-    "spectrogram_to_image_array",
-    "resize_spectrogram",
 ]
