@@ -7,6 +7,7 @@ Provides a high-level interface for RF-DETR fine-tuning that wraps the rfdetr li
 from __future__ import annotations
 
 import logging
+import warnings
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -18,18 +19,65 @@ from rf_detr_finetuning.trainer.config import TrainerConfig
 
 logger = logging.getLogger(__name__)
 
+# Warnings commonly emitted by rfdetr/DINOv2 during model loading and training
+_RFDETR_WARNING_PATTERNS = (
+    ".*positional encodings.*",
+    ".*patch size.*",
+    ".*meshgrid.*",
+    ".*multidimensional indexing.*",
+    ".*lightning.*",
+)
+
+
+def _get_model_classes() -> dict[str, type]:
+    """Import and return the rfdetr model class mapping.
+
+    Lazily imports from rfdetr to avoid import-time failures when
+    the rfdetr package is not installed.
+
+    Returns:
+        Dictionary mapping model size names to rfdetr model classes.
+
+    Raises:
+        ImportError: If rfdetr package is not installed.
+
+    """
+    try:
+        from rfdetr import RFDETRBase, RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
+    except ImportError:
+        raise ImportError("rfdetr package not found. Install with: pip install rfdetr")
+
+    return {
+        "nano": RFDETRNano,
+        "small": RFDETRSmall,
+        "base": RFDETRBase,
+        "medium": RFDETRMedium,
+        "large": RFDETRLarge,
+    }
+
+
+def get_model_sizes() -> list[str]:
+    """Return sorted list of supported RF-DETR model size names.
+
+    This can be used without importing rfdetr (returns hardcoded names).
+
+    Returns:
+        List of model size strings: ['base', 'large', 'medium', 'nano', 'small'].
+
+    """
+    return ["nano", "small", "base", "medium", "large"]
+
 
 @dataclass
 class RFDETRConfig:
     """RF-DETR specific configuration.
 
     Attributes:
-        model_size: Model variant ('small', 'base', 'large').
+        model_size: Model variant ('nano', 'small', 'base', 'medium', 'large').
         pretrained_weights: Path to pretrained weights or 'coco'.
-        num_classes: Number of object classes (excluding background).
+        num_classes: Number of object classes (excluding background). Used for logging
+            and metadata; rfdetr auto-detects this from the dataset at training time.
         image_size: Input image size (square).
-        freeze_backbone: Freeze backbone during training.
-        freeze_batch_norm: Freeze batch normalization layers.
 
     """
 
@@ -37,8 +85,6 @@ class RFDETRConfig:
     pretrained_weights: str | Path | None = None
     num_classes: int = 1
     image_size: int = 640
-    freeze_backbone: bool = False
-    freeze_batch_norm: bool = True
 
 
 class RFDETRTrainer:
@@ -75,23 +121,18 @@ class RFDETRTrainer:
         Returns:
             Initialized model.
 
+        Raises:
+            ImportError: If rfdetr package is not installed.
+            ValueError: If model_size is not one of the supported sizes.
+
         """
-        try:
-            from rfdetr import RFDETRBase, RFDETRLarge, RFDETRSmall
-        except ImportError:
-            raise ImportError("rfdetr package not found. Install with: pip install rfdetr")
+        model_classes = _get_model_classes()
+        size = self.model_config.model_size.lower()
 
-        # Select model class based on size
-        model_classes = {
-            "small": RFDETRSmall,
-            "base": RFDETRBase,
-            "large": RFDETRLarge,
-        }
-
-        model_class = model_classes.get(self.model_config.model_size.lower())
+        model_class = model_classes.get(size)
         if model_class is None:
             raise ValueError(
-                f"Unknown model size: {self.model_config.model_size}. Choose from: {list(model_classes.keys())}"
+                f"Unknown model size: {self.model_config.model_size!r}. Choose from: {list(model_classes.keys())}"
             )
 
         # Initialize model
@@ -107,6 +148,7 @@ class RFDETRTrainer:
         self,
         dataset_path: str | Path,
         output_dir: str | Path | None = None,
+        suppress_warnings: bool = True,
         **train_kwargs: Any,
     ) -> dict[str, Any]:
         """Run RF-DETR fine-tuning.
@@ -116,6 +158,7 @@ class RFDETRTrainer:
         Args:
             dataset_path: Path to dataset in RF-DETR format.
             output_dir: Output directory for checkpoints.
+            suppress_warnings: Suppress common rfdetr/DINOv2 warnings during training.
             **train_kwargs: Additional arguments passed to model.train().
 
         Returns:
@@ -132,6 +175,7 @@ class RFDETRTrainer:
         # Prepare training arguments
         train_args = {
             "dataset_dir": str(dataset_path),
+            "coco_path": str(dataset_path),
             "epochs": self.trainer_config.epochs,
             "batch_size": self.trainer_config.batch_size,
             "grad_accum_steps": self.trainer_config.accumulate_grad_batches,
@@ -140,17 +184,19 @@ class RFDETRTrainer:
             "device": self.trainer_config.device,
             "seed": self.trainer_config.seed,
             "workers": self.trainer_config.num_workers,
+            "image_size": self.model_config.image_size,
         }
-
-        # Add image size if supported
-        train_args["image_size"] = self.model_config.image_size
 
         # Override with user kwargs
         train_args.update(train_kwargs)
 
         logger.info(f"Starting RF-DETR training with config: {train_args}")
 
-        # Run training
+        # Optionally suppress noisy warnings from rfdetr/DINOv2
+        if suppress_warnings:
+            for pattern in _RFDETR_WARNING_PATTERNS:
+                warnings.filterwarnings("ignore", message=pattern)
+
         try:
             results = self.model.train(**train_args)
         except Exception as e:
@@ -176,7 +222,7 @@ class RFDETRTrainer:
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 
         if "model_state_dict" in checkpoint:
             state_dict = checkpoint["model_state_dict"]

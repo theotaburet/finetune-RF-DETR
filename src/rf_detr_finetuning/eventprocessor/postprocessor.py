@@ -199,16 +199,21 @@ class EventPostProcessor:
     def from_fft_config(
         cls,
         fft_config: Any,  # TimeBasedFFTConfig
-        chunk_config: Any,  # ChunkConfig
         sample_rate: int,
         class_names: dict[int, str] | None = None,
         merge_config: MergeConfig | None = None,
     ) -> EventPostProcessor:
-        """Create post-processor from FFT and chunk configs.
+        """Create post-processor from FFT config.
+
+        Note: This method computes ``freq_per_pixel_hz`` assuming a **linear**
+        frequency scale (Nyquist / n_mels). If the spectrogram uses a mel
+        scale, the resulting frequency values will be approximate. For
+        accurate mel-to-Hz conversion, configure ``PostProcessorConfig``
+        directly with a mel-aware ``freq_per_pixel_hz`` or set it to
+        ``None`` to skip frequency reconstruction.
 
         Args:
             fft_config: TimeBasedFFTConfig instance.
-            chunk_config: ChunkConfig instance.
             sample_rate: Audio sample rate.
             class_names: Optional class name mapping.
             merge_config: Optional merge configuration.
@@ -267,8 +272,6 @@ def windows_to_events(
     processor = EventPostProcessor(config)
 
     # Create a minimal AudioPredictionResult
-    from rf_detr_finetuning.predictor.audio import AudioPredictionResult
-
     prediction = AudioPredictionResult(
         window_predictions=windows,
     )

@@ -11,10 +11,29 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from rf_detr_finetuning.eventprocessor.event import AudioEvent, EventList
 
 logger = logging.getLogger(__name__)
+
+
+def _compute_temporal_gap(a: AudioEvent, b: AudioEvent) -> float:
+    """Compute temporal gap between two events.
+
+    Args:
+        a: First event.
+        b: Second event.
+
+    Returns:
+        Gap in milliseconds (0 if overlapping).
+
+    """
+    if a.end_ms <= b.start_ms:
+        return b.start_ms - a.end_ms
+    if b.end_ms <= a.start_ms:
+        return a.start_ms - b.end_ms
+    return 0.0
 
 
 def _merge_event_group(
@@ -200,12 +219,7 @@ class EventMerger:
             Gap in milliseconds (negative if overlapping).
 
         """
-        if a.end_ms <= b.start_ms:
-            return b.start_ms - a.end_ms
-        elif b.end_ms <= a.start_ms:
-            return a.start_ms - b.end_ms
-        else:
-            return 0.0  # Overlapping
+        return _compute_temporal_gap(a, b)
 
     def _merge_group(self, events: list[AudioEvent]) -> AudioEvent:
         """Merge a group of overlapping events.
@@ -326,6 +340,58 @@ class ClassWiseMergeConfig:
     score_threshold: float = 0.0
     min_duration_ms: float = 0.0
     max_duration_ms: float | None = None
+
+    @classmethod
+    def from_dict(cls, config_data: dict[str, Any]) -> ClassWiseMergeConfig:
+        """Create config from a dictionary (e.g. parsed from YAML).
+
+        Expected structure::
+
+            {
+                "default": {"delta_time_ms": 500, "delta_freq_hz": 500, ...},
+                "classes": {
+                    "0": {"delta_time_ms": 200, ...},
+                    "1": {"delta_time_ms": 1000, ...},
+                },
+                "filtering": {
+                    "score_threshold": 0.3,
+                    "min_duration_ms": 100,
+                    "max_duration_ms": 60000,
+                },
+            }
+
+        Args:
+            config_data: Configuration dictionary.
+
+        Returns:
+            ClassWiseMergeConfig instance.
+
+        """
+        default_data = config_data.get("default", {})
+        default_params = ClassMergeParams(
+            delta_time_ms=default_data.get("delta_time_ms", 500.0),
+            delta_freq_hz=default_data.get("delta_freq_hz", 500.0),
+            min_overlap_ratio=default_data.get("min_overlap_ratio"),
+            score_strategy=default_data.get("score_strategy", "max"),
+        )
+
+        class_params: dict[int, ClassMergeParams] = {}
+        for class_id_str, class_data in config_data.get("classes", {}).items():
+            class_params[int(class_id_str)] = ClassMergeParams(
+                delta_time_ms=class_data.get("delta_time_ms", default_params.delta_time_ms),
+                delta_freq_hz=class_data.get("delta_freq_hz", default_params.delta_freq_hz),
+                min_overlap_ratio=class_data.get("min_overlap_ratio"),
+                score_strategy=class_data.get("score_strategy", default_params.score_strategy),
+            )
+
+        filtering_data = config_data.get("filtering", {})
+        return cls(
+            class_params=class_params,
+            default_params=default_params,
+            score_threshold=filtering_data.get("score_threshold", 0.0),
+            min_duration_ms=filtering_data.get("min_duration_ms", 0.0),
+            max_duration_ms=filtering_data.get("max_duration_ms"),
+        )
 
 
 class ClassWiseMerger:
@@ -487,12 +553,7 @@ class ClassWiseMerger:
             Gap in milliseconds (0 if overlapping).
 
         """
-        if a.end_ms <= b.start_ms:
-            return b.start_ms - a.end_ms
-        elif b.end_ms <= a.start_ms:
-            return a.start_ms - b.end_ms
-        else:
-            return 0.0
+        return _compute_temporal_gap(a, b)
 
     def _compute_freq_gap(self, a: AudioEvent, b: AudioEvent) -> float:
         """Compute frequency gap between events.

@@ -17,7 +17,7 @@ preprocess:
   audio_dir: data/hydrophone/
   metadata_dir: data/annotations/
   output_dir: data/processed
-  chunking_config: config/audio_chunking.yaml
+  chunking_config: config/chunking.yaml
   extensions:
     - .flac
     - .wav

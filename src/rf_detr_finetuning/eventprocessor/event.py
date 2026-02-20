@@ -347,5 +347,5 @@ class EventList:
             events=events,
             audio_path=data.get("audio_path"),
             duration_ms=data.get("duration_ms", 0.0),
-            class_names=data.get("class_names", {}),
+            class_names={int(k): v for k, v in data.get("class_names", {}).items()},
         )

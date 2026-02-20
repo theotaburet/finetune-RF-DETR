@@ -56,7 +56,7 @@ def parse_args() -> argparse.Namespace:
     # Model settings
     parser.add_argument(
         "--model-size",
-        choices=["small", "base", "large"],
+        choices=["nano", "small", "base", "medium", "large"],
         default="base",
         help="RF-DETR model size",
     )

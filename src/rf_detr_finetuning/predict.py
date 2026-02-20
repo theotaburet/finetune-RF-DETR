@@ -1,18 +1,16 @@
-"""Prediction script for RF-DETR finetuned models."""
+"""Legacy prediction function for RF-DETR models.
 
-import contextlib
-import io
-import logging
+.. deprecated:: 0.3.0
+    Use :class:`rf_detr_finetuning.predictor.RFDETRPredictor` instead.
+    This module is a thin compatibility shim and will be removed in a future release.
+
+"""
+
+from __future__ import annotations
+
 import warnings
-from pathlib import Path
 
-import matplotlib.pyplot as plt
 import numpy as np
-import supervision as sv
-import torch
-from supervision import Color
-
-from rf_detr_finetuning.finetune import MAP_MODEL_SIZE
 
 
 def prediction(
@@ -20,92 +18,76 @@ def prediction(
     model_size: str,
     model_path: str | None = None,
     confidence: float = 0.5,
-    class_names: dict[int, str] = None,
+    class_names: dict[int, str] | None = None,
 ) -> np.ndarray:
-    """Predict on an image using a pretrained or checkpoint RF-DETR model.
+    """Predict on an image and return an annotated BGR numpy array.
+
+    .. deprecated:: 0.3.0
+        Use :class:`rf_detr_finetuning.predictor.RFDETRPredictor` instead.
 
     Args:
-        model_size: Size of the RF-DETR model to use (one of 'base', 'small', 'nano', 'large', 'medium').
-        model_path: Path to the model checkpoint or pretrained model name.
         image_path: Path to the input image.
+        model_size: Size of the RF-DETR model ('nano', 'small', 'base', 'medium', 'large').
+        model_path: Path to the model checkpoint.
         confidence: Confidence threshold for predictions.
         class_names: Optional mapping from class id to class name.
 
+    Returns:
+        Annotated image as a BGR uint8 numpy array (for OpenCV/supervision compatibility).
+
     """
-    assert model_size.lower() in MAP_MODEL_SIZE.keys(), f"Model size must be one of {list(MAP_MODEL_SIZE.keys())}"
-    logging.info(f"Loading model from {model_size}")
-    ModelClass = MAP_MODEL_SIZE[model_size.lower()]
+    warnings.warn(
+        "prediction() is deprecated and will be removed in v0.3.0. "
+        "Use rf_detr_finetuning.predictor.RFDETRPredictor instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
-    checkpoint_class_names = None
-    checkpoint_num_classes = None
-    if model_path and Path(model_path).exists():
-        try:
-            checkpoint = torch.load(model_path, map_location="cpu", weights_only=False)
-            if isinstance(checkpoint, dict) and "model" in checkpoint:
-                bias = checkpoint["model"].get("class_embed.bias")
-                if bias is not None:
-                    checkpoint_num_classes = bias.shape[0] - 1
-            if isinstance(checkpoint, dict) and "args" in checkpoint and hasattr(checkpoint["args"], "class_names"):
-                checkpoint_class_names = checkpoint["args"].class_names
-        except Exception as exc:
-            logging.warning("Failed to inspect checkpoint metadata: %s", exc)
+    import matplotlib.pyplot as plt
+    import supervision as sv
+    from supervision import Color
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="torch.meshgrid:.*")
-        # Suppress noisy stdout from DINOv2 weight checks
-        with contextlib.redirect_stdout(io.StringIO()):
-            if model_path and Path(model_path).exists():
-                # Assume it's a checkpoint path
-                if checkpoint_num_classes is not None:
-                    model = ModelClass(pretrain_weights=model_path, num_classes=checkpoint_num_classes)
-                else:
-                    model = ModelClass(pretrain_weights=model_path)
-            else:
-                model = ModelClass()
-    # Optimize for inference to avoid runtime warning
-    try:
-        model.optimize_for_inference(compile=False)
-    except Exception:
-        pass
+    from rf_detr_finetuning.predictor import RFDETRPredictor
 
-    # Perform inference
-    logging.info(f"Processing image: {image_path}")
+    # Convert dict class_names to list for RFDETRPredictor
+    class_names_list: list[str] | None = None
+    if class_names:
+        max_id = max(class_names.keys())
+        class_names_list = [class_names.get(i, str(i)) for i in range(max_id + 1)]
 
-    # Load and convert image (handle grayscale spectrograms)
+    predictor = RFDETRPredictor(
+        model_size=model_size,
+        weights_path=model_path,
+        class_names=class_names_list,
+    )
+
+    result = predictor.predict(image_path, confidence_threshold=confidence)
+
+    # Build labels from detections
+    labels = []
+    for det in result.detections:
+        if det.class_name:
+            labels.append(det.class_name)
+        elif class_names and det.class_id in class_names:
+            labels.append(class_names[det.class_id])
+        else:
+            labels.append(str(det.class_id))
+
+    # Load image for annotation
     image = plt.imread(image_path)
-
-    # Convert grayscale to RGB if needed
-    if image.ndim == 2:  # Grayscale
+    if image.ndim == 2:
         image = np.stack([image, image, image], axis=-1)
-    elif image.shape[-1] == 1:  # Grayscale with channel dimension
+    elif image.shape[-1] == 1:
         image = np.repeat(image, 3, axis=-1)
-    elif image.shape[-1] == 4:  # RGBA
+    elif image.shape[-1] == 4:
         image = image[..., :3]
-
-    # Ensure uint8
     if image.dtype != np.uint8:
         image = (image * 255).clip(0, 255).astype(np.uint8)
 
-    with warnings.catch_warnings():
-        warnings.filterwarnings("ignore", message="torch.meshgrid:.*")
-        predictions = model.predict(image, confidence=confidence)
-    logging.info(f"{predictions=}")
+    # Annotate (BGR for OpenCV compatibility, matching original behaviour)
+    annotated = np.ascontiguousarray(image[:, :, ::-1])
+    sv_detections = result.to_supervision()
+    annotated = sv.BoxAnnotator().annotate(annotated, sv_detections)
+    annotated = sv.LabelAnnotator(text_color=Color.RED).annotate(annotated, sv_detections, labels=labels)
 
-    # Get labels from predictions
-    if not class_names:
-        class_names = checkpoint_class_names or model.class_names
-    if isinstance(class_names, list | tuple):
-        labels = [
-            class_names[int(cls_id)] if int(cls_id) < len(class_names) else str(int(cls_id))
-            for cls_id in predictions.class_id
-        ]
-    else:
-        labels = [class_names.get(int(cls_id), str(int(cls_id))) for cls_id in predictions.class_id]
-
-    # Prepare image for annotation (ensure BGR and contiguous for OpenCV)
-    annotated_image = np.ascontiguousarray(image[:, :, ::-1])
-
-    annotated_image = sv.BoxAnnotator().annotate(annotated_image, predictions)
-    annotated_image = sv.LabelAnnotator(text_color=Color.RED).annotate(annotated_image, predictions, labels=labels)
-
-    return annotated_image
+    return annotated

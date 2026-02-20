@@ -346,7 +346,7 @@ class RFDETRPredictor(Predictor):
     Wraps the rfdetr library's inference capabilities.
 
     Args:
-        model_size: Model variant ('small', 'base', 'large').
+        model_size: Model variant ('nano', 'small', 'base', 'medium', 'large').
         weights_path: Path to fine-tuned weights.
         device: Inference device.
         class_names: List of class names.
@@ -375,7 +375,6 @@ class RFDETRPredictor(Predictor):
         """
         self.model_size = model_size
         self.weights_path = weights_path
-        self._class_names = class_names
 
         # Set base-class attributes without calling super().__init__
         self.device = torch.device(device)
@@ -386,28 +385,71 @@ class RFDETRPredictor(Predictor):
         self._rfdetr_model = self._load_model()
 
     def _load_model(self) -> Any:
-        """Load RF-DETR model."""
-        try:
-            from rfdetr import RFDETRBase, RFDETRLarge, RFDETRSmall
-        except ImportError:
-            raise ImportError("rfdetr package not found. Install with: pip install rfdetr")
+        """Load RF-DETR model with checkpoint introspection.
 
-        model_classes = {
-            "small": RFDETRSmall,
-            "base": RFDETRBase,
-            "large": RFDETRLarge,
-        }
+        Uses the canonical model class mapping from ``_get_model_classes()``
+        (supports all 5 sizes: nano, small, base, medium, large).
+
+        When a checkpoint path is provided, the checkpoint is introspected to
+        extract ``num_classes`` (from the classification head bias shape) and
+        ``class_names`` (from saved args metadata). This avoids shape mismatches
+        when loading fine-tuned models.
+
+        """
+        from rf_detr_finetuning.trainer.rfdetr_wrapper import _get_model_classes
+
+        model_classes = _get_model_classes()
 
         model_class = model_classes.get(self.model_size.lower())
         if model_class is None:
-            raise ValueError(f"Unknown model size: {self.model_size}")
+            valid = list(model_classes.keys())
+            raise ValueError(f"Unknown model size: {self.model_size!r}. Choose from: {valid}")
 
+        # Introspect checkpoint for num_classes and class_names
+        num_classes = None
+        checkpoint_class_names = None
+
+        if self.weights_path and Path(self.weights_path).exists():
+            try:
+                checkpoint = torch.load(str(self.weights_path), map_location="cpu", weights_only=False)
+                if isinstance(checkpoint, dict):
+                    # Extract num_classes from classification head bias
+                    model_state = checkpoint.get("model", {})
+                    bias = model_state.get("class_embed.bias")
+                    if bias is not None:
+                        num_classes = bias.shape[0] - 1
+
+                    # Extract class_names from saved args
+                    args = checkpoint.get("args")
+                    if args is not None and hasattr(args, "class_names"):
+                        checkpoint_class_names = args.class_names
+            except Exception as exc:
+                logger.warning("Failed to inspect checkpoint metadata: %s", exc)
+
+        # Build constructor kwargs
+        kwargs: dict[str, Any] = {}
         if self.weights_path:
-            model = model_class(pretrain_weights=str(self.weights_path))
-        else:
-            model = model_class()
+            kwargs["pretrain_weights"] = str(self.weights_path)
+        if num_classes is not None:
+            kwargs["num_classes"] = num_classes
 
-        logger.info(f"Loaded RF-DETR {self.model_size}")
+        model = model_class(**kwargs)
+
+        # Apply checkpoint class_names if caller didn't provide them
+        if self.class_names is None and checkpoint_class_names is not None:
+            self.class_names = checkpoint_class_names
+
+        # Optimize for inference (disable training-only ops)
+        try:
+            model.optimize_for_inference(compile=False)
+        except Exception:
+            pass
+
+        logger.info(
+            "Loaded RF-DETR %s%s",
+            self.model_size,
+            f" (num_classes={num_classes})" if num_classes is not None else "",
+        )
         return model
 
     def predict(
@@ -440,8 +482,8 @@ class RFDETRPredictor(Predictor):
                 class_id = results.class_id[i] if hasattr(results, "class_id") else 0
 
                 class_name = None
-                if self._class_names and class_id < len(self._class_names):
-                    class_name = self._class_names[class_id]
+                if self.class_names and class_id < len(self.class_names):
+                    class_name = self.class_names[class_id]
 
                 detections.append(
                     Detection(

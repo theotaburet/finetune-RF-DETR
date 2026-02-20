@@ -761,6 +761,13 @@ class TestDryRunOutput:
             "total": len(sample_labels),
         }
 
+        # Mock retry stats (no retries during dry-run)
+        client.get_retry_stats.return_value = {
+            "total_retries": 0,
+            "successful_retries": 0,
+            "failed_after_retries": 0,
+        }
+
         return client
 
     @pytest.fixture

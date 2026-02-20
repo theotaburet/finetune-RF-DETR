@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import tempfile
 from typing import Any
 
@@ -18,6 +19,8 @@ def compute_coco_metrics(
     predictions: list[dict[str, Any]],
     ground_truths: list[dict[str, Any]],
     categories: list[dict[str, Any]],
+    image_width: int = 640,
+    image_height: int = 640,
 ) -> dict[str, float]:
     """Compute COCO detection metrics from predictions and ground truths.
 
@@ -37,6 +40,8 @@ def compute_coco_metrics(
         categories: List of category dicts with keys:
             - id: int
             - name: str
+        image_width: Image width for COCO dataset format (default 640).
+        image_height: Image height for COCO dataset format (default 640).
 
     Returns:
         Dictionary with metrics:
@@ -77,7 +82,7 @@ def compute_coco_metrics(
     for ann in ground_truths:
         image_ids.add(ann["image_id"])
 
-    gt_images = [{"id": img_id, "width": 640, "height": 640} for img_id in sorted(image_ids)]
+    gt_images = [{"id": img_id, "width": image_width, "height": image_height} for img_id in sorted(image_ids)]
 
     # Ensure all ground truth annotations have required fields
     gt_annotations = []
@@ -96,45 +101,43 @@ def compute_coco_metrics(
         "categories": categories,
     }
 
-    # Load ground truth via temp file (pycocotools API)
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(gt_dataset, f)
-        gt_path = f.name
+    # Load ground truth and predictions via temp files (pycocotools API)
+    gt_path = None
+    dt_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(gt_dataset, f)
+            gt_path = f.name
 
-    coco_gt = COCO(gt_path)
+        coco_gt = COCO(gt_path)
 
-    # Load predictions
-    if not predictions:
-        return {"mAP": 0.0, "mAP50": 0.0, "mAP75": 0.0}
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(predictions, f)
+            dt_path = f.name
 
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-        json.dump(predictions, f)
-        dt_path = f.name
+        coco_dt = coco_gt.loadRes(dt_path)
 
-    coco_dt = coco_gt.loadRes(dt_path)
+        # Run evaluation
+        coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
+        coco_eval.evaluate()
+        coco_eval.accumulate()
+        coco_eval.summarize()
 
-    # Run evaluation
-    coco_eval = COCOeval(coco_gt, coco_dt, "bbox")
-    coco_eval.evaluate()
-    coco_eval.accumulate()
-    coco_eval.summarize()
-
-    # Clean up temp files
-    import os
-
-    os.unlink(gt_path)
-    os.unlink(dt_path)
-
-    # Extract metrics from COCOeval stats
-    stats = coco_eval.stats
-    return {
-        "mAP": float(stats[0]),
-        "mAP50": float(stats[1]),
-        "mAP75": float(stats[2]),
-        "mAP_small": float(stats[3]),
-        "mAP_medium": float(stats[4]),
-        "mAP_large": float(stats[5]),
-        "mAR_1": float(stats[6]),
-        "mAR_10": float(stats[7]),
-        "mAR_100": float(stats[8]),
-    }
+        # Extract metrics from COCOeval stats
+        stats = coco_eval.stats
+        return {
+            "mAP": float(stats[0]),
+            "mAP50": float(stats[1]),
+            "mAP75": float(stats[2]),
+            "mAP_small": float(stats[3]),
+            "mAP_medium": float(stats[4]),
+            "mAP_large": float(stats[5]),
+            "mAR_1": float(stats[6]),
+            "mAR_10": float(stats[7]),
+            "mAR_100": float(stats[8]),
+        }
+    finally:
+        if gt_path is not None:
+            os.unlink(gt_path)
+        if dt_path is not None:
+            os.unlink(dt_path)

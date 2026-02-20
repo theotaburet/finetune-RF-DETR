@@ -33,7 +33,6 @@ import json
 import logging
 import sys
 from pathlib import Path
-from typing import Any
 
 import yaml
 from rich.console import Console
@@ -163,7 +162,7 @@ def load_merge_config(args: argparse.Namespace) -> ClassWiseMergeConfig:
         with open(args.config) as f:
             config_data = yaml.safe_load(f)
 
-        return _parse_config_dict(config_data)
+        return ClassWiseMergeConfig.from_dict(config_data)
 
     # Build config from CLI arguments
     default_params = ClassMergeParams(
@@ -177,52 +176,6 @@ def load_merge_config(args: argparse.Namespace) -> ClassWiseMergeConfig:
         default_params=default_params,
         score_threshold=args.score_threshold,
         min_duration_ms=args.min_duration,
-    )
-
-
-def _parse_config_dict(config_data: dict[str, Any]) -> ClassWiseMergeConfig:
-    """Parse configuration from dictionary.
-
-    Args:
-        config_data: Configuration dictionary from YAML.
-
-    Returns:
-        ClassWiseMergeConfig instance.
-
-    """
-    # Parse default params
-    default_data = config_data.get("default", {})
-    default_params = ClassMergeParams(
-        delta_time_ms=default_data.get("delta_time_ms", 500.0),
-        delta_freq_hz=default_data.get("delta_freq_hz", 500.0),
-        min_overlap_ratio=default_data.get("min_overlap_ratio"),
-        score_strategy=default_data.get("score_strategy", "max"),
-    )
-
-    # Parse class-specific params
-    class_params = {}
-    classes_data = config_data.get("classes", {})
-    for class_id_str, class_data in classes_data.items():
-        class_id = int(class_id_str)
-        class_params[class_id] = ClassMergeParams(
-            delta_time_ms=class_data.get("delta_time_ms", default_params.delta_time_ms),
-            delta_freq_hz=class_data.get("delta_freq_hz", default_params.delta_freq_hz),
-            min_overlap_ratio=class_data.get("min_overlap_ratio"),
-            score_strategy=class_data.get("score_strategy", default_params.score_strategy),
-        )
-
-    # Parse filtering params
-    filtering_data = config_data.get("filtering", {})
-    score_threshold = filtering_data.get("score_threshold", 0.0)
-    min_duration_ms = filtering_data.get("min_duration_ms", 0.0)
-    max_duration_ms = filtering_data.get("max_duration_ms")
-
-    return ClassWiseMergeConfig(
-        class_params=class_params,
-        default_params=default_params,
-        score_threshold=score_threshold,
-        min_duration_ms=min_duration_ms,
-        max_duration_ms=max_duration_ms,
     )
 
 

@@ -99,7 +99,7 @@ def load_checkpoint(
 
     """
     path = Path(path)
-    checkpoint = torch.load(path, map_location=device)
+    checkpoint = torch.load(path, map_location=device, weights_only=True)
 
     if model is not None and "model_state_dict" in checkpoint:
         model.load_state_dict(checkpoint["model_state_dict"], strict=strict)
@@ -350,7 +350,7 @@ class CheckpointManager:
             # Try to load config from latest checkpoint
             latest = self.save_dir / "checkpoint.pth"
             if latest.exists():
-                checkpoint = torch.load(latest, map_location="cpu")
+                checkpoint = torch.load(latest, map_location="cpu", weights_only=True)
                 if "config" in checkpoint:
                     export_dict["config"] = checkpoint["config"]
 

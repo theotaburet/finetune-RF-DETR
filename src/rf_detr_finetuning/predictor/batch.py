@@ -25,9 +25,12 @@ logger = logging.getLogger(__name__)
 class BatchPredictor:
     """Batch prediction handler for efficient inference.
 
+    Note: Currently processes images sequentially. The ``batch_size``
+    parameter is accepted for API compatibility but not yet used.
+
     Args:
         predictor: Base predictor instance.
-        batch_size: Images per batch.
+        batch_size: Images per batch (reserved for future batched inference).
 
     """
 

@@ -58,12 +58,10 @@ class TestModuleImports:
             CheckpointConfig,
             OptimizerConfig,
             SchedulerConfig,
-            Trainer,
             TrainerConfig,
             TrainingState,
         )
 
-        assert callable(Trainer)
         assert callable(TrainerConfig)
         assert callable(TrainingState)
         assert callable(OptimizerConfig)

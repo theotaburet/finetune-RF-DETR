@@ -2,12 +2,8 @@
 
 import logging
 import shutil
-import warnings
 from pathlib import Path
-from typing import Literal
 
-import matplotlib.pyplot as plt
-import supervision as sv
 import yaml
 from rich.console import Console
 
@@ -23,8 +19,9 @@ from rf_detr_finetuning.dataprocessor import (
     draw_bboxes_on_spectrogram,
     load_chunking_config_from_yaml,
 )
-from rf_detr_finetuning.finetune import MAP_MODEL_SIZE, finetune_model
-from rf_detr_finetuning.predict import prediction
+from rf_detr_finetuning.trainer.rfdetr_wrapper import (
+    get_model_sizes,
+)
 
 
 def download_kaggle_dataset(name: str, dest: str = "data", force: bool = False) -> str:
@@ -72,80 +69,151 @@ def download_kaggle_dataset(name: str, dest: str = "data", force: bool = False) 
     return str(dataset_path)
 
 
-def train(config_file: str, dataset: str, model_size: Literal[tuple(MAP_MODEL_SIZE.keys())] = "small") -> None:
+def train(config_file: str, dataset: str, model_size: str = "small") -> None:
     """Train the RF-DETR model using the provided YAML config and dataset path.
 
     Args:
         config_file: Path to the YAML training configuration file.
         dataset: Path to the prepared dataset directory.
-        model_size: Size of the RF-DETR model to use.
+        model_size: Size of the RF-DETR model to use (nano, small, base, medium, large).
 
     """
+    from rf_detr_finetuning.trainer import (
+        CheckpointConfig,
+        OptimizerConfig,
+        RFDETRConfig,
+        RFDETRTrainer,
+        TrainerConfig,
+    )
+
     console = Console()
 
-    # Suppress PyTorch and RF-DETR warnings
-    warnings.filterwarnings("ignore", category=UserWarning)
-    warnings.filterwarnings("ignore", message=".*TensorBoard.*")
+    valid_sizes = get_model_sizes()
+    if model_size.lower() not in valid_sizes:
+        console.print(f"[red]Invalid model size: {model_size!r}. Choose from: {valid_sizes}[/red]")
+        return
 
     with open(config_file) as f:
         cfg = yaml.safe_load(f)
 
-    finetune_model(model_size=model_size, dataset_path=dataset, config=cfg)
+    # Build structured config from the flat YAML dict
+    trainer_config = TrainerConfig(
+        epochs=cfg.get("epochs", 10),
+        batch_size=cfg.get("batch_size", 8),
+        num_workers=cfg.get("workers", 4),
+        optimizer=OptimizerConfig(lr=cfg.get("lr", 1e-4)),
+        checkpoint=CheckpointConfig(
+            save_dir=cfg.get("project", "output") + "/" + cfg.get("name", "run"),
+        ),
+    )
 
-    # After training, try to display the metrics plot if it exists and GUI is available
-    metrics_plot = Path("output/metrics_plot.png")
-    if not metrics_plot.exists():
-        return
+    model_config = RFDETRConfig(
+        model_size=model_size,
+        image_size=cfg.get("imgsz", 640),
+    )
 
-    console.print("\n[cyan]Training metrics plot available at:[/cyan]", metrics_plot)
+    trainer = RFDETRTrainer(model_config=model_config, trainer_config=trainer_config)
 
-    try:
-        img = plt.imread(str(metrics_plot))
-        plt.imshow(img)
-        plt.title("Training Metrics")
-        if plt.get_backend().lower() != "agg":
-            plt.show()
-    except Exception:
-        pass
+    # Pass through any extra keys from the YAML as train_kwargs
+    known_keys = {"epochs", "batch_size", "workers", "lr", "project", "name", "imgsz"}
+    extra_kwargs = {k: v for k, v in cfg.items() if k not in known_keys}
+
+    trainer.train(dataset_path=dataset, **extra_kwargs)
 
 
 def predict(
     image_path: str,
-    model_size: Literal[tuple(MAP_MODEL_SIZE.keys())] = "small",
+    model_size: str = "small",
     model_path: str | None = None,
     confidence: float = 0.5,
-    class_names: dict[int, str] = None,
+    class_names: dict[int, str] | None = None,
 ) -> None:
     """Predict on an image using a pretrained or checkpoint RF-DETR model and display the result.
 
     Args:
         image_path: Path to the input image.
-        model_size: Size of the RF-DETR model to use.
+        model_size: Size of the RF-DETR model to use (nano, small, base, medium, large).
         model_path: Path to the model checkpoint or pretrained model name.
         confidence: Confidence threshold for predictions.
         class_names: Optional mapping from class id to class name.
 
     """
-    visual = prediction(
-        image_path=image_path,
+    import matplotlib.pyplot as plt
+    import numpy as np
+
+    from rf_detr_finetuning.predictor import RFDETRPredictor
+
+    valid_sizes = get_model_sizes()
+    if model_size.lower() not in valid_sizes:
+        logging.error(f"Invalid model size: {model_size!r}. Choose from: {valid_sizes}")
+        return
+
+    # Convert dict class_names to list for RFDETRPredictor
+    class_names_list: list[str] | None = None
+    if class_names:
+        max_id = max(class_names.keys())
+        class_names_list = [class_names.get(i, str(i)) for i in range(max_id + 1)]
+
+    predictor = RFDETRPredictor(
         model_size=model_size,
-        model_path=model_path,
-        confidence=confidence,
-        class_names=class_names,
+        weights_path=model_path,
+        class_names=class_names_list,
     )
 
-    # Display or save the annotated image depending on backend
-    if plt.get_backend().lower() == "agg":
-        output_path = Path("output/prediction.png")
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        if visual.ndim == 3 and visual.shape[2] == 3:
-            visual_to_save = visual[:, :, ::-1]
+    result = predictor.predict(image_path, confidence_threshold=confidence)
+
+    # Build annotated image using supervision
+    try:
+        import supervision as sv
+        from supervision import Color
+
+        sv_detections = result.to_supervision()
+
+        # Build labels
+        labels = []
+        for det in result.detections:
+            if det.class_name:
+                labels.append(det.class_name)
+            elif class_names and det.class_id in class_names:
+                labels.append(class_names[det.class_id])
+            else:
+                labels.append(str(det.class_id))
+
+        # Load image for annotation
+        image = plt.imread(image_path)
+        if image.ndim == 2:
+            image = np.stack([image, image, image], axis=-1)
+        elif image.shape[-1] == 4:
+            image = image[..., :3]
+        if image.dtype != np.uint8:
+            image = (image * 255).clip(0, 255).astype(np.uint8)
+
+        annotated = np.ascontiguousarray(image[:, :, ::-1])
+        annotated = sv.BoxAnnotator().annotate(annotated, sv_detections)
+        annotated = sv.LabelAnnotator(text_color=Color.RED).annotate(annotated, sv_detections, labels=labels)
+
+        # Display or save
+        if plt.get_backend().lower() == "agg":
+            output_path = Path("output/prediction.png")
+            output_path.mkdir(parents=True, exist_ok=True) if not output_path.parent.exists() else None
+            visual_to_save = annotated[:, :, ::-1] if annotated.ndim == 3 and annotated.shape[2] == 3 else annotated
+            plt.imsave(str(output_path), visual_to_save)
+            logging.info(f"Prediction saved to {output_path}")
         else:
-            visual_to_save = visual
-        plt.imsave(str(output_path), visual_to_save)
-        logging.info(f"Prediction saved to {output_path}")
-        return
-    sv.plot_image(visual)
+            sv.plot_image(annotated)
+
+    except ImportError:
+        logging.warning("supervision not installed; printing detections as text")
+        for det in result.detections:
+            logging.info(
+                "  [%.0f,%.0f,%.0f,%.0f] class=%s score=%.3f",
+                det.x1,
+                det.y1,
+                det.x2,
+                det.y2,
+                det.class_name or det.class_id,
+                det.score,
+            )
 
 
 def audio_to_coco(
@@ -464,53 +532,28 @@ def download_ekb_labels(
         )
 
     """
-    import subprocess
-    import sys
+    # Import directly instead of shelling out via subprocess
+    from run_download_data import DataDownloader, DownloadConfig
 
-    # Resolve script path relative to the project root (one level above the package)
-    script_path = Path(__file__).resolve().parents[2] / "run_download_data.py"
-    if not script_path.exists():
-        raise FileNotFoundError(
-            f"run_download_data.py not found at {script_path}. Ensure the script exists in the project root directory."
-        )
+    config = DownloadConfig(
+        api_url=api_url,
+        api_token=token,
+        output_dir=output_dir,
+        sources=[s.strip() for s in source.split(",")] if source else [],
+        label_hierarchy=label_hierarchy or "",
+        labeler=labeler or "",
+        from_date=from_date or "",
+        to_date=to_date or "",
+        confidence_min=confidence_min,
+        confidence_max=confidence_max,
+        min_duration_ms=min_duration,
+        max_frequency_hz=max_frequency,
+        max_labels=max_labels,
+        seed=seed or 42,
+    )
 
-    cmd = [
-        sys.executable,
-        str(script_path),
-        "--api-url",
-        api_url,
-        "--token",
-        token,
-        "--output-dir",
-        output_dir,
-    ]
-
-    if source:
-        cmd.extend(["--source", source])
-    if label_hierarchy:
-        cmd.extend(["--label-hierarchy", label_hierarchy])
-    if labeler:
-        cmd.extend(["--labeler", labeler])
-    if from_date:
-        cmd.extend(["--from-date", from_date])
-    if to_date:
-        cmd.extend(["--to-date", to_date])
-    if confidence_min is not None:
-        cmd.extend(["--confidence-min", str(confidence_min)])
-    if confidence_max is not None:
-        cmd.extend(["--confidence-max", str(confidence_max)])
-    if min_duration is not None:
-        cmd.extend(["--min-duration", str(min_duration)])
-    if max_frequency is not None:
-        cmd.extend(["--max-frequency", str(max_frequency)])
-    if max_labels is not None:
-        cmd.extend(["--max-labels", str(max_labels)])
-    if seed is not None:
-        cmd.extend(["--seed", str(seed)])
-    if dry_run:
-        cmd.append("--dry-run")
-
-    subprocess.run(cmd, check=True)
+    downloader = DataDownloader(config)
+    downloader.run(dry_run=dry_run)
 
 
 commands = {

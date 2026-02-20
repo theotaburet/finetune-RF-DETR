@@ -71,6 +71,18 @@ class SchedulerConfig:
     gamma: float = 0.1
     patience: int = 5
 
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "name": self.name,
+            "warmup_epochs": self.warmup_epochs,
+            "warmup_lr": self.warmup_lr,
+            "min_lr": self.min_lr,
+            "step_size": self.step_size,
+            "gamma": self.gamma,
+            "patience": self.patience,
+        }
+
 
 @dataclass
 class CheckpointConfig:
@@ -98,6 +110,18 @@ class CheckpointConfig:
     def __post_init__(self) -> None:
         """Ensure save_dir is a Path."""
         self.save_dir = Path(self.save_dir)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "save_dir": str(self.save_dir),
+            "save_every_n_epochs": self.save_every_n_epochs,
+            "save_best": self.save_best,
+            "best_metric": self.best_metric,
+            "best_mode": self.best_mode,
+            "keep_last_n": self.keep_last_n,
+            "resume_from": str(self.resume_from) if self.resume_from else None,
+        }
 
 
 @dataclass
@@ -220,22 +244,6 @@ class TrainerConfig:
             "seed": self.seed,
             "deterministic": self.deterministic,
             "optimizer": self.optimizer.to_dict(),
-            "scheduler": {
-                "name": self.scheduler.name,
-                "warmup_epochs": self.scheduler.warmup_epochs,
-                "warmup_lr": self.scheduler.warmup_lr,
-                "min_lr": self.scheduler.min_lr,
-                "step_size": self.scheduler.step_size,
-                "gamma": self.scheduler.gamma,
-                "patience": self.scheduler.patience,
-            },
-            "checkpoint": {
-                "save_dir": str(self.checkpoint.save_dir),
-                "save_every_n_epochs": self.checkpoint.save_every_n_epochs,
-                "save_best": self.checkpoint.save_best,
-                "best_metric": self.checkpoint.best_metric,
-                "best_mode": self.checkpoint.best_mode,
-                "keep_last_n": self.checkpoint.keep_last_n,
-                "resume_from": str(self.checkpoint.resume_from) if self.checkpoint.resume_from else None,
-            },
+            "scheduler": self.scheduler.to_dict(),
+            "checkpoint": self.checkpoint.to_dict(),
         }

@@ -20,7 +20,6 @@ from rf_detr_finetuning.trainer.logger import (
     TrainingLogger,
 )
 from rf_detr_finetuning.trainer.loop import (
-    Trainer,
     TrainingState,
 )
 from rf_detr_finetuning.trainer.metrics import (
@@ -30,6 +29,7 @@ from rf_detr_finetuning.trainer.rfdetr_wrapper import (
     RFDETRConfig,
     RFDETRTrainer,
     create_rfdetr_trainer,
+    get_model_sizes,
 )
 
 __all__ = [
@@ -38,8 +38,7 @@ __all__ = [
     "OptimizerConfig",
     "SchedulerConfig",
     "CheckpointConfig",
-    # Training loop
-    "Trainer",
+    # Training state
     "TrainingState",
     # Checkpointing
     "CheckpointManager",
@@ -54,4 +53,5 @@ __all__ = [
     "RFDETRTrainer",
     "RFDETRConfig",
     "create_rfdetr_trainer",
+    "get_model_sizes",
 ]

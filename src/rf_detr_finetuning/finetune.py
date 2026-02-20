@@ -1,82 +1,75 @@
-"""Finetuning utilities for RF-DETR models."""
+"""Finetuning utilities for RF-DETR models.
+
+.. deprecated:: 0.3.0
+    Use :class:`rf_detr_finetuning.trainer.RFDETRTrainer` instead.
+    This module is a thin compatibility shim and will be removed in a future release.
+
+"""
 
 import warnings
 
-import torch
-from rfdetr import RFDETRBase, RFDETRLarge, RFDETRMedium, RFDETRNano, RFDETRSmall
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
+from rf_detr_finetuning.trainer.config import CheckpointConfig, OptimizerConfig, TrainerConfig
+from rf_detr_finetuning.trainer.rfdetr_wrapper import (
+    RFDETRConfig,
+    RFDETRTrainer,
+    _get_model_classes,
+    get_model_sizes,
+)
 
-MAP_MODEL_SIZE = {
-    "base": RFDETRBase,
-    "small": RFDETRSmall,
-    "nano": RFDETRNano,
-    "large": RFDETRLarge,
-    "medium": RFDETRMedium,
-}
+# Backward-compatible mapping; prefer get_model_sizes() or _get_model_classes() for new code.
+MAP_MODEL_SIZE: dict = {}
+try:
+    MAP_MODEL_SIZE = _get_model_classes()
+except ImportError:
+    pass
 
 
 def finetune_model(model_size: str, dataset_path: str, config: dict) -> dict:
     """Finetune an RF-DETR model on a custom dataset.
 
-    Loads the specified model size, updates the config with dataset path and device,
-    and starts the training process. Results are logged and printed.
+    .. deprecated:: 0.3.0
+        Use :class:`rf_detr_finetuning.trainer.RFDETRTrainer` instead.
 
     Args:
-        model_size: Size of the RF-DETR model to use (one of 'base', 'small', 'nano', 'large', 'medium').
+        model_size: Size of the RF-DETR model to use (one of 'nano', 'small', 'base', 'medium', 'large').
         dataset_path: Path to the dataset directory containing images and annotations.
         config: Dictionary of training configuration parameters.
 
+    Returns:
+        Training results dictionary.
+
     """
-    console = Console()
+    warnings.warn(
+        "finetune_model() is deprecated and will be removed in v0.3.0. "
+        "Use rf_detr_finetuning.trainer.RFDETRTrainer instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
-    # Suppress non-critical warnings
-    warnings.filterwarnings("ignore", message=".*positional encodings.*")
-    warnings.filterwarnings("ignore", message=".*patch size.*")
-    warnings.filterwarnings("ignore", message=".*meshgrid.*")
-    warnings.filterwarnings("ignore", message=".*multidimensional indexing.*")
-    warnings.filterwarnings("ignore", message=".*lightning.*")
+    valid_sizes = get_model_sizes()
+    if model_size.lower() not in valid_sizes:
+        raise ValueError(f"Model size must be one of {valid_sizes}, got {model_size!r}")
 
-    assert model_size.lower() in MAP_MODEL_SIZE.keys(), f"Model size must be one of {list(MAP_MODEL_SIZE.keys())}"
+    trainer_config = TrainerConfig(
+        epochs=config.get("epochs", 10),
+        batch_size=config.get("batch_size", 8),
+        num_workers=config.get("workers", 4),
+        device=config.get("device", "auto"),
+        optimizer=OptimizerConfig(lr=config.get("lr", 1e-4)),
+        checkpoint=CheckpointConfig(
+            save_dir=config.get("project", "output") + "/" + config.get("name", "run"),
+        ),
+    )
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model_config = RFDETRConfig(
+        model_size=model_size,
+        image_size=config.get("imgsz", 640),
+    )
 
-    # Display training configuration
-    table = Table(title="🚀 RF-DETR Training Configuration", show_header=True, header_style="bold cyan")
-    table.add_column("Parameter", style="cyan", width=25)
-    table.add_column("Value", style="green")
+    trainer = RFDETRTrainer(model_config=model_config, trainer_config=trainer_config)
 
-    table.add_row("Model Size", model_size.upper())
-    table.add_row("Dataset Path", dataset_path)
-    table.add_row("Device", device.upper())
-    table.add_row("Epochs", str(config.get("epochs", "N/A")))
-    table.add_row("Batch Size", str(config.get("batch_size", "N/A")))
-    table.add_row("Learning Rate", str(config.get("lr", "N/A")))
-    table.add_row("Image Size", str(config.get("imgsz", "N/A")))
-    table.add_row("Workers", str(config.get("workers", "N/A")))
-    table.add_row("Output Dir", config.get("project", "output") + "/" + config.get("name", "run"))
+    # Pass through any extra keys from the config as train_kwargs
+    known_keys = {"epochs", "batch_size", "workers", "lr", "project", "name", "imgsz", "device"}
+    extra_kwargs = {k: v for k, v in config.items() if k not in known_keys}
 
-    console.print()
-    console.print(table)
-    console.print()
-
-    ModelClass = MAP_MODEL_SIZE[model_size.lower()]
-    model = ModelClass()
-
-    config["dataset_dir"] = dataset_path
-    config["coco_path"] = dataset_path  # Required for dataset_file='coco'
-    config["device"] = device
-
-    console.print(Panel("[bold yellow]Starting training...[/bold yellow]", border_style="yellow"))
-    console.print()
-
-    # Just run training normally without stdout capture (it blocks the training)
-    # RF-DETR will print its own progress
-    results = model.train(**config)
-
-    console.print()
-    console.print(Panel("[bold green]✓ Training Complete![/bold green]", border_style="green"))
-    console.print()
-
-    return results
+    return trainer.train(dataset_path=dataset_path, suppress_warnings=True, **extra_kwargs)

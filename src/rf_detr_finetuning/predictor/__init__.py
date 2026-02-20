@@ -8,6 +8,7 @@ Provides inference capabilities for:
 """
 
 from rf_detr_finetuning.predictor.audio import (
+    AudioPredictionResult,
     AudioPredictor,
     WindowPrediction,
 )
@@ -35,5 +36,6 @@ __all__ = [
     "predict_dataset",
     # Audio-specific
     "AudioPredictor",
+    "AudioPredictionResult",
     "WindowPrediction",
 ]

@@ -187,9 +187,6 @@ class TrainingLogger:
 
         self._epoch_start_time: float = 0
         self._train_start_time: float = 0
-        self._progress: Progress | None = None
-        self._epoch_task = None
-        self._batch_task = None
 
     def on_train_start(self) -> None:
         """Called at start of training."""
@@ -278,7 +275,7 @@ class TrainingLogger:
             message: Message to log.
 
         """
-        self.console.print(f"[blue]ℹ[/blue] {message}")
+        self.console.print(f"[blue]INFO:[/blue] {message}")
         logger.info(message)
 
     def log_warning(self, message: str) -> None:
@@ -288,7 +285,7 @@ class TrainingLogger:
             message: Message to log.
 
         """
-        self.console.print(f"[yellow]⚠[/yellow] {message}")
+        self.console.print(f"[yellow]WARNING:[/yellow] {message}")
         logger.warning(message)
 
     def log_error(self, message: str) -> None:
@@ -298,7 +295,7 @@ class TrainingLogger:
             message: Message to log.
 
         """
-        self.console.print(f"[red]✗[/red] {message}")
+        self.console.print(f"[red]ERROR:[/red] {message}")
         logger.error(message)
 
     def log_success(self, message: str) -> None:
@@ -308,7 +305,7 @@ class TrainingLogger:
             message: Message to log.
 
         """
-        self.console.print(f"[green]✓[/green] {message}")
+        self.console.print(f"[green]OK:[/green] {message}")
         logger.info(message)
 
     def display_final_summary(self) -> None:

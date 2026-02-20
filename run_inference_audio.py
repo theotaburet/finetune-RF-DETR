@@ -44,6 +44,8 @@ from rich.logging import RichHandler
 from rich.progress import BarColumn, Progress, SpinnerColumn, TaskProgressColumn, TextColumn
 from rich.table import Table
 
+from rf_detr_finetuning.utils import load_class_names
+
 # Configure logging with Rich
 logging.basicConfig(
     level=logging.INFO,
@@ -91,7 +93,7 @@ def parse_args() -> argparse.Namespace:
     )
     model_group.add_argument(
         "--model-size",
-        choices=["small", "base", "large"],
+        choices=["nano", "small", "base", "medium", "large"],
         default="base",
         help="RF-DETR model size",
     )
@@ -205,36 +207,6 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
-
-
-def load_class_names(args: argparse.Namespace) -> list[str] | None:
-    """Load class names from arguments.
-
-    Args:
-        args: Parsed arguments.
-
-    Returns:
-        List of class names or None.
-
-    """
-    if args.class_names:
-        return args.class_names
-
-    if args.classes_file and args.classes_file.exists():
-        with open(args.classes_file) as f:
-            data = json.load(f)
-
-        if isinstance(data, list):
-            return data
-        elif isinstance(data, dict):
-            if "categories" in data:
-                # COCO format
-                cats = sorted(data["categories"], key=lambda x: x["id"])
-                return [c["name"] for c in cats]
-            elif "class_names" in data:
-                return data["class_names"]
-
-    return None
 
 
 @dataclass
@@ -441,45 +413,9 @@ class AudioInferencePipeline:
             ClassWiseMergeConfig instance.
 
         """
-        from rf_detr_finetuning.eventprocessor.merger import (
-            ClassMergeParams,
-            ClassWiseMergeConfig,
-        )
+        from rf_detr_finetuning.eventprocessor.merger import ClassWiseMergeConfig
 
-        # Parse default params
-        default_data = config_data.get("default", {})
-        default_params = ClassMergeParams(
-            delta_time_ms=default_data.get("delta_time_ms", 500.0),
-            delta_freq_hz=default_data.get("delta_freq_hz", 500.0),
-            min_overlap_ratio=default_data.get("min_overlap_ratio"),
-            score_strategy=default_data.get("score_strategy", "max"),
-        )
-
-        # Parse class-specific params
-        class_params = {}
-        classes_data = config_data.get("classes", {})
-        for class_id_str, class_data in classes_data.items():
-            class_id = int(class_id_str)
-            class_params[class_id] = ClassMergeParams(
-                delta_time_ms=class_data.get("delta_time_ms", default_params.delta_time_ms),
-                delta_freq_hz=class_data.get("delta_freq_hz", default_params.delta_freq_hz),
-                min_overlap_ratio=class_data.get("min_overlap_ratio"),
-                score_strategy=class_data.get("score_strategy", default_params.score_strategy),
-            )
-
-        # Parse filtering params
-        filtering_data = config_data.get("filtering", {})
-        score_threshold = filtering_data.get("score_threshold", 0.0)
-        min_duration_ms = filtering_data.get("min_duration_ms", 0.0)
-        max_duration_ms = filtering_data.get("max_duration_ms")
-
-        return ClassWiseMergeConfig(
-            class_params=class_params,
-            default_params=default_params,
-            score_threshold=score_threshold,
-            min_duration_ms=min_duration_ms,
-            max_duration_ms=max_duration_ms,
-        )
+        return ClassWiseMergeConfig.from_dict(config_data)
 
     def process_audio(
         self,
@@ -719,7 +655,7 @@ def main() -> int:
         return 1
 
     # Load class names
-    class_names = load_class_names(args)
+    class_names = load_class_names(args.class_names, args.classes_file)
     if class_names:
         console.print(f"[cyan]Classes:[/cyan] {class_names}")
 

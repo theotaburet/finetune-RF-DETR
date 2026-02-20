@@ -32,7 +32,6 @@ dependencies = [
   "jsonargparse>=4.46",
   "kaggle>=1.7.4.5",
   "kagglehub>=0.4.2",
-  "pre-commit>=4.5.1",
   "pyyaml>=6",
   "rfdetr",
   "rich>=13",
@@ -47,7 +46,7 @@ optional-dependencies.data = [
   "kagglehub",
 ]
 optional-dependencies.dev = [
-  "pre-commit",
+  "pre-commit>=4.5.1",
   "pytest",
 ]
 urls.Homepage = "https://github.com/Borda/rf-detr-training-pipeline"
@@ -97,6 +96,7 @@ blank = true
 
 [tool.pytest.ini_options]
 testpaths = [ "tests" ]
+pythonpath = [ "." ]
 addopts = "-v --tb=short --color=yes"
 markers = [
   "real_files: uses real_audio_path and real_json_path from pytest config",
