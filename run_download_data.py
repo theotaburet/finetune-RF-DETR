@@ -63,7 +63,9 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import random
 import sys
+import time
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -180,6 +182,8 @@ class AdvancedConfig:
 
     seed: int = 42
     batch_size: int = 100
+    max_retries: int = 3
+    retry_backoff_factor: float = 1.0
 
 
 @dataclass
@@ -260,6 +264,8 @@ class DownloadConfig:
             "advanced": {
                 "seed": self.advanced.seed,
                 "batch_size": self.advanced.batch_size,
+                "max_retries": self.advanced.max_retries,
+                "retry_backoff_factor": self.advanced.retry_backoff_factor,
             },
         }
 
@@ -404,14 +410,45 @@ class DownloadResult:
 
 
 class EKBAPIClient:
-    """Client for the EKB API."""
+    """Client for the EKB API with built-in retry logic.
 
-    def __init__(self, base_url: str, token: str | None = None) -> None:
+    Implements exponential backoff with jitter for handling transient errors
+    during API calls and file downloads.
+
+    Example usage:
+        client = EKBAPIClient(
+            base_url="https://api.example.com/ekb/api",
+            token="your_token",
+            max_retries=5,
+            retry_backoff_factor=2.0,
+        )
+
+        # Retries are automatic
+        labels = client.list_labels()
+        audio_data = client.get_sound_file(label_id)
+
+    """
+
+    # HTTP status codes that should trigger a retry
+    DEFAULT_RETRY_STATUS_CODES = [408, 429, 500, 502, 503, 504]
+
+    def __init__(
+        self,
+        base_url: str,
+        token: str | None = None,
+        max_retries: int = 3,
+        retry_backoff_factor: float = 1.0,
+        retry_on_status_codes: list[int] | None = None,
+    ) -> None:
         """Initialize the API client.
 
         Args:
             base_url: Base URL of the EKB API (e.g., "https://api.example.com/ekb/api").
             token: Bearer token for authentication (optional).
+            max_retries: Maximum number of retry attempts (default: 3).
+            retry_backoff_factor: Backoff factor for exponential retry delay (default: 1.0).
+            retry_on_status_codes: HTTP status codes that should trigger a retry.
+                Defaults to [408, 429, 500, 502, 503, 504].
 
         """
         self.base_url = base_url.rstrip("/")
@@ -420,12 +457,120 @@ class EKBAPIClient:
         if token:
             self.session.headers.update({"Authorization": f"Bearer {token}"})
 
+        # Retry configuration
+        self.max_retries = max_retries
+        self.retry_backoff_factor = retry_backoff_factor
+        self.retry_on_status_codes = retry_on_status_codes or self.DEFAULT_RETRY_STATUS_CODES
+
+        # Retry statistics
+        self.retry_stats = {
+            "total_requests": 0,
+            "total_retries": 0,
+            "successful_retries": 0,
+            "failed_after_retries": 0,
+        }
+
+    def _should_retry(self, exception: Exception, attempt: int) -> bool:
+        """Determine if a request should be retried based on the exception.
+
+        Args:
+            exception: The exception that occurred.
+            attempt: Current attempt number (0-based).
+
+        Returns:
+            True if the request should be retried.
+
+        """
+        if attempt >= self.max_retries:
+            return False
+
+        # Retry on connection errors (timeouts, network issues)
+        if isinstance(
+            exception,
+            requests.exceptions.ConnectionError
+            | requests.exceptions.Timeout
+            | requests.exceptions.ChunkedEncodingError,
+        ):
+            return True
+
+        # Retry on specific HTTP status codes
+        if isinstance(exception, requests.exceptions.HTTPError):
+            if exception.response is not None:
+                status_code = exception.response.status_code
+                if status_code in self.retry_on_status_codes:
+                    return True
+
+        return False
+
+    def _calculate_retry_delay(self, attempt: int) -> float:
+        """Calculate the delay before the next retry attempt.
+
+        Uses exponential backoff with jitter to avoid thundering herd.
+
+        Args:
+            attempt: Current attempt number (0-based).
+
+        Returns:
+            Delay in seconds.
+
+        """
+        # Exponential backoff: base_delay * (2 ^ attempt) * backoff_factor
+        base_delay = 1.0
+        delay = base_delay * (2**attempt) * self.retry_backoff_factor
+
+        # Add jitter (±25% randomization)
+        jitter = delay * 0.25 * (2 * random.random() - 1)
+        final_delay = max(0, delay + jitter)
+
+        # Cap maximum delay at 60 seconds
+        return min(final_delay, 60.0)
+
     def _get(self, endpoint: str, params: dict | None = None) -> dict:
-        """Make a GET request to the API."""
+        """Make a GET request to the API with retry logic."""
+        self.retry_stats["total_requests"] += 1
         url = urljoin(self.base_url + "/", endpoint.lstrip("/"))
-        response = self.session.get(url, params=params, timeout=30)
-        response.raise_for_status()
-        return response.json()
+        last_exception = None
+        first_attempt = True
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.session.get(url, params=params, timeout=30)
+                response.raise_for_status()
+                result = response.json()
+
+                # If succeeded after retries, update stats
+                if not first_attempt:
+                    self.retry_stats["successful_retries"] += 1
+                    logger.info(f"Request to {endpoint} succeeded after {attempt + 1} attempts")
+
+                return result
+
+            except Exception as e:
+                last_exception = e
+                first_attempt = False
+
+                if not self._should_retry(e, attempt):
+                    if attempt > 0:
+                        self.retry_stats["failed_after_retries"] += 1
+                    raise
+
+                if attempt < self.max_retries:
+                    self.retry_stats["total_retries"] += 1
+                    delay = self._calculate_retry_delay(attempt)
+                    logger.warning(
+                        f"Request to {endpoint} failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                        f"Retrying in {delay:.2f} seconds..."
+                    )
+                    time.sleep(delay)
+                else:
+                    self.retry_stats["failed_after_retries"] += 1
+                    logger.error(f"All {self.max_retries + 1} attempts failed for {endpoint}. Last error: {e}")
+                    raise
+
+        # Should never reach here
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("Unexpected error in retry logic")
 
     def list_sources(self) -> list[str]:
         """List all available sources from the API.
@@ -439,11 +584,73 @@ class EKBAPIClient:
         return [s.get("name", "") for s in sources if s.get("name")]
 
     def _get_binary(self, endpoint: str) -> bytes:
-        """Make a GET request and return binary content."""
+        """Make a GET request and return binary content with retry logic."""
+        self.retry_stats["total_requests"] += 1
         url = urljoin(self.base_url + "/", endpoint.lstrip("/"))
-        response = self.session.get(url, timeout=60)
-        response.raise_for_status()
-        return response.content
+        last_exception = None
+        first_attempt = True
+
+        for attempt in range(self.max_retries + 1):
+            try:
+                response = self.session.get(url, timeout=60)
+                response.raise_for_status()
+                content = response.content
+
+                # If succeeded after retries, update stats
+                if not first_attempt:
+                    self.retry_stats["successful_retries"] += 1
+                    logger.info(f"Binary request to {endpoint} succeeded after {attempt + 1} attempts")
+
+                return content
+
+            except Exception as e:
+                last_exception = e
+                first_attempt = False
+
+                if not self._should_retry(e, attempt):
+                    if attempt > 0:
+                        self.retry_stats["failed_after_retries"] += 1
+                    raise
+
+                if attempt < self.max_retries:
+                    self.retry_stats["total_retries"] += 1
+                    delay = self._calculate_retry_delay(attempt)
+                    logger.warning(
+                        f"Binary request to {endpoint} failed (attempt {attempt + 1}/{self.max_retries + 1}): {e}. "
+                        f"Retrying in {delay:.2f} seconds..."
+                    )
+                    time.sleep(delay)
+                else:
+                    self.retry_stats["failed_after_retries"] += 1
+                    logger.error(f"All {self.max_retries + 1} attempts failed for {endpoint}. Last error: {e}")
+                    raise
+
+        # Should never reach here
+        if last_exception:
+            raise last_exception
+        raise RuntimeError("Unexpected error in retry logic")
+
+    def get_retry_stats(self) -> dict[str, int]:
+        """Get retry statistics.
+
+        Returns:
+            Dictionary containing:
+            - total_requests: Total number of requests made
+            - total_retries: Total number of retry attempts
+            - successful_retries: Requests that succeeded after retry
+            - failed_after_retries: Requests that failed after all retries
+
+        """
+        return self.retry_stats.copy()
+
+    def reset_retry_stats(self) -> None:
+        """Reset retry statistics."""
+        self.retry_stats = {
+            "total_requests": 0,
+            "total_retries": 0,
+            "successful_retries": 0,
+            "failed_after_retries": 0,
+        }
 
     def list_labels(
         self,
@@ -1284,6 +1491,15 @@ class DataDownloader:
                 split_success = sum(1 for r in split_res if r.success)
                 table.add_row(f"{split_name.upper()} set", f"{split_success}/{len(split_res)}")
 
+        # Retry statistics
+        retry_stats = self.api_client.get_retry_stats()
+        if retry_stats["total_retries"] > 0:
+            table.add_row("", "")
+            table.add_row("[yellow]Network Retries", f"[yellow]{retry_stats['total_retries']}")
+            table.add_row("[green]Successful after retry", f"[green]{retry_stats['successful_retries']}")
+            if retry_stats["failed_after_retries"] > 0:
+                table.add_row("[red]Failed after all retries", f"[red]{retry_stats['failed_after_retries']}")
+
         console.print(table)
 
         # Label hierarchy distribution
@@ -1365,6 +1581,12 @@ def merge_config_with_args(config: DownloadConfig, args: argparse.Namespace) -> 
     # Limit settings
     if args.max_labels is not None:
         config.limits.max_labels = args.max_labels
+
+    # Advanced/retry settings
+    if hasattr(args, "max_retries") and args.max_retries is not None:
+        config.advanced.max_retries = args.max_retries
+    if hasattr(args, "retry_backoff") and args.retry_backoff is not None:
+        config.advanced.retry_backoff_factor = args.retry_backoff
 
     return config
 
@@ -1545,6 +1767,16 @@ Examples:
         help="Random seed for reproducibility",
     )
     parser.add_argument(
+        "--max-retries",
+        type=int,
+        help="Maximum number of retry attempts for failed requests (default: 3)",
+    )
+    parser.add_argument(
+        "--retry-backoff",
+        type=float,
+        help="Backoff factor for exponential retry delay (default: 1.0)",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Preview what would be downloaded without actually downloading",
@@ -1593,9 +1825,17 @@ Examples:
             console.print(f"  Test files: {config.split.test_files}")
             console.print(f"  Train/Val ratio: {config.split.train_ratio:.0%}/{config.split.val_ratio:.0%}")
         console.print(f"  Filters: {config.filters.to_dict()}")
+        console.print(
+            f"  Retry: max_retries={config.advanced.max_retries}, backoff={config.advanced.retry_backoff_factor}"
+        )
 
-    # Initialize API client
-    api_client = EKBAPIClient(base_url=config.api.url, token=config.api.token)
+    # Initialize API client with retry configuration
+    api_client = EKBAPIClient(
+        base_url=config.api.url,
+        token=config.api.token,
+        max_retries=config.advanced.max_retries,
+        retry_backoff_factor=config.advanced.retry_backoff_factor,
+    )
 
     # Initialize downloader
     downloader = DataDownloader(
