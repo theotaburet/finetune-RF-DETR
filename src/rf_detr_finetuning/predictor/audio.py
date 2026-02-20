@@ -170,7 +170,7 @@ class AudioPredictor:
         duration_ms = len(audio) / sr * 1000
 
         # Process into chunks (no events for inference)
-        chunks = self.chunker.process_file(str(audio_path), events=[])
+        chunks = self.chunker.chunk_audio(audio, sr, events=[], source_uuid=audio_path.stem)
 
         logger.info(f"Processing {audio_path.name}: {duration_ms:.0f}ms, {len(chunks)} windows")
 

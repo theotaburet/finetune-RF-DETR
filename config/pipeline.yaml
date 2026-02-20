@@ -1,6 +1,13 @@
 name: rf_detr_pipeline
 description: RF-DETR Audio Event Detection Pipeline
 
+# Download step - fetches labeled audio from EKB API
+download:
+  enabled: false
+  config_file: config/download.yaml  # Use existing download config
+  max_labels: 100  # Quick test mode - set to null for full download
+  force: false
+
 # Class names - ORDER MATTERS! Index = Class ID (0-based)
 # Example for marine acoustics:
 # class_names: ["humpback_whale", "killer_whale", "blue_whale", "dolphin", "ship_noise", "fish_chorus"]

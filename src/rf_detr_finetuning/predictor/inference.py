@@ -326,7 +326,7 @@ class Predictor:
             Predictor instance.
 
         """
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 
         model = model_class(**model_kwargs)
 
@@ -362,6 +362,10 @@ class RFDETRPredictor(Predictor):
     ) -> None:
         """Initialize RF-DETR predictor.
 
+        Note: We intentionally skip ``Predictor.__init__`` because RF-DETR
+        manages its own model loading and device placement.  We only set the
+        base-class attributes that downstream code may reference.
+
         Args:
             model_size: Model size (e.g., 'base', 'small').
             weights_path: Path to model weights.
@@ -373,15 +377,13 @@ class RFDETRPredictor(Predictor):
         self.weights_path = weights_path
         self._class_names = class_names
 
-        # Load RF-DETR model
-        self._rfdetr_model = self._load_model()
+        # Set base-class attributes without calling super().__init__
+        self.device = torch.device(device)
+        self.class_names = class_names
+        self.model = None  # RF-DETR model is accessed via _rfdetr_model
 
-        # For base class compatibility (not used directly)
-        super().__init__(
-            model=nn.Identity(),  # Placeholder
-            device=device,
-            class_names=class_names,
-        )
+        # Load RF-DETR model (handles its own device placement)
+        self._rfdetr_model = self._load_model()
 
     def _load_model(self) -> Any:
         """Load RF-DETR model."""

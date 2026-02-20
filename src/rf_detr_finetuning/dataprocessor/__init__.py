@@ -48,6 +48,7 @@ from rf_detr_finetuning.dataprocessor.normalization import (
 )
 from rf_detr_finetuning.dataprocessor.preprocessing import (
     AGCConfig,
+    AudioPreprocessor,
     DynamicRangeConfig,
     PreprocessingConfig,
     apply_agc,
@@ -55,6 +56,7 @@ from rf_detr_finetuning.dataprocessor.preprocessing import (
     apply_preemphasis,
     normalize_spectrogram,
     preprocess_audio,
+    preprocess_for_inference,
 )
 from rf_detr_finetuning.dataprocessor.visualization import (
     draw_bboxes_on_spectrogram,
@@ -76,6 +78,8 @@ __all__ = [
     "apply_agc",
     "apply_detrend",
     "apply_preemphasis",
+    "AudioPreprocessor",
+    "preprocess_for_inference",
     # Chunking
     "ChunkConfig",
     "TimeBasedFFTConfig",

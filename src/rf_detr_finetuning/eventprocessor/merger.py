@@ -17,6 +17,78 @@ from rf_detr_finetuning.eventprocessor.event import AudioEvent, EventList
 logger = logging.getLogger(__name__)
 
 
+def _merge_event_group(
+    events: list[AudioEvent],
+    score_strategy: str,
+    extra_metadata: dict | None = None,
+) -> AudioEvent:
+    """Merge a group of overlapping events into one.
+
+    Shared helper used by both ``EventMerger`` and ``ClassWiseMerger``.
+
+    Args:
+        events: Events to merge (must be non-empty).
+        score_strategy: How to combine scores ('max', 'avg', 'sum', 'weighted').
+        extra_metadata: Extra keys to include in the merged event's metadata.
+
+    Returns:
+        Single merged event.
+
+    """
+    if len(events) == 1:
+        return events[0]
+
+    start_ms = min(e.start_ms for e in events)
+    end_ms = max(e.end_ms for e in events)
+
+    scores = [e.score for e in events]
+    if score_strategy == "max":
+        score = max(scores)
+    elif score_strategy == "avg":
+        score = sum(scores) / len(scores)
+    elif score_strategy == "sum":
+        score = min(1.0, sum(scores))
+    elif score_strategy == "weighted":
+        total_duration = sum(e.duration_ms for e in events)
+        if total_duration > 0:
+            score = sum(e.score * (e.duration_ms / total_duration) for e in events)
+        else:
+            score = sum(scores) / len(scores)
+    else:
+        score = max(scores)
+
+    best_event = max(events, key=lambda e: e.score)
+
+    all_windows: list = []
+    for e in events:
+        all_windows.extend(e.source_windows)
+
+    min_freq = min(
+        (e.min_freq_hz for e in events if e.min_freq_hz is not None),
+        default=None,
+    )
+    max_freq = max(
+        (e.max_freq_hz for e in events if e.max_freq_hz is not None),
+        default=None,
+    )
+
+    metadata: dict = {"merged_count": len(events)}
+    if extra_metadata:
+        metadata.update(extra_metadata)
+
+    return AudioEvent(
+        start_ms=start_ms,
+        end_ms=end_ms,
+        class_id=best_event.class_id,
+        class_name=best_event.class_name,
+        score=score,
+        min_freq_hz=min_freq,
+        max_freq_hz=max_freq,
+        source_windows=list(set(all_windows)),
+        metadata=metadata,
+    )
+
+
 @dataclass
 class MergeConfig:
     """Configuration for event merging.
@@ -145,53 +217,7 @@ class EventMerger:
             Single merged event.
 
         """
-        if len(events) == 1:
-            return events[0]
-
-        # Compute merged boundaries
-        start_ms = min(e.start_ms for e in events)
-        end_ms = max(e.end_ms for e in events)
-
-        # Compute merged score
-        scores = [e.score for e in events]
-        if self.config.merge_strategy == "max":
-            score = max(scores)
-        elif self.config.merge_strategy == "avg":
-            score = sum(scores) / len(scores)
-        elif self.config.merge_strategy == "sum":
-            score = min(1.0, sum(scores))
-        else:
-            score = max(scores)
-
-        # Take class from highest-scoring event
-        best_event = max(events, key=lambda e: e.score)
-
-        # Merge source windows
-        all_windows = []
-        for e in events:
-            all_windows.extend(e.source_windows)
-
-        # Merge frequency info
-        min_freq = min(
-            (e.min_freq_hz for e in events if e.min_freq_hz is not None),
-            default=None,
-        )
-        max_freq = max(
-            (e.max_freq_hz for e in events if e.max_freq_hz is not None),
-            default=None,
-        )
-
-        return AudioEvent(
-            start_ms=start_ms,
-            end_ms=end_ms,
-            class_id=best_event.class_id,
-            class_name=best_event.class_name,
-            score=score,
-            min_freq_hz=min_freq,
-            max_freq_hz=max_freq,
-            source_windows=list(set(all_windows)),
-            metadata={"merged_count": len(events)},
-        )
+        return _merge_event_group(events, score_strategy=self.config.merge_strategy)
 
 
 def nms_merge(
@@ -500,58 +526,8 @@ class ClassWiseMerger:
             Merged event.
 
         """
-        if len(events) == 1:
-            return events[0]
-
-        # Compute merged boundaries
-        start_ms = min(e.start_ms for e in events)
-        end_ms = max(e.end_ms for e in events)
-
-        # Compute merged score
-        scores = [e.score for e in events]
-        if params.score_strategy == "max":
-            score = max(scores)
-        elif params.score_strategy == "avg":
-            score = sum(scores) / len(scores)
-        elif params.score_strategy == "weighted":
-            # Weight by duration
-            total_duration = sum(e.duration_ms for e in events)
-            if total_duration > 0:
-                score = sum(e.score * (e.duration_ms / total_duration) for e in events)
-            else:
-                score = sum(scores) / len(scores)
-        else:
-            score = max(scores)
-
-        # Take class from first event (all same class)
-        representative = events[0]
-
-        # Merge source windows
-        all_windows = []
-        for e in events:
-            all_windows.extend(e.source_windows)
-
-        # Merge frequency info
-        min_freq = min(
-            (e.min_freq_hz for e in events if e.min_freq_hz is not None),
-            default=None,
-        )
-        max_freq = max(
-            (e.max_freq_hz for e in events if e.max_freq_hz is not None),
-            default=None,
-        )
-
-        return AudioEvent(
-            start_ms=start_ms,
-            end_ms=end_ms,
-            class_id=representative.class_id,
-            class_name=representative.class_name,
-            score=score,
-            min_freq_hz=min_freq,
-            max_freq_hz=max_freq,
-            source_windows=list(set(all_windows)),
-            metadata={
-                "merged_count": len(events),
-                "merge_strategy": params.score_strategy,
-            },
+        return _merge_event_group(
+            events,
+            score_strategy=params.score_strategy,
+            extra_metadata={"merge_strategy": params.score_strategy},
         )

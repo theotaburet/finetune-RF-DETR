@@ -270,7 +270,7 @@ class AudioChunkDataset(Dataset):
                 audio, sr = load_audio_file(str(audio_path))
                 duration_ms = len(audio) / sr * 1000
                 window_ms = self.chunker.chunk_config.window_duration_ms
-                overlap_ms = self.chunker.chunk_config.overlap_ms
+                overlap_ms = self.chunker.chunk_config.get_overlap_ms()
                 step_ms = window_ms - overlap_ms
 
                 if duration_ms <= window_ms:
@@ -318,8 +318,11 @@ class AudioChunkDataset(Dataset):
 
         events = metadata.get("events", [])
 
-        # Process with chunker
-        chunks = self.chunker.process_file(str(audio_path), events)
+        # Load audio and process with chunker
+        from rf_detr_finetuning.dataprocessor import load_audio_file
+
+        audio, sr = load_audio_file(str(audio_path))
+        chunks = self.chunker.chunk_audio(audio, sr, events=events, source_uuid=audio_path.stem)
 
         # Handle case where actual chunks differ from estimate
         if chunk_idx >= len(chunks):
@@ -337,7 +340,7 @@ class AudioChunkDataset(Dataset):
             # COCO format: [x, y, width, height] -> XYXY
             x, y, w, h = bbox.x, bbox.y, bbox.width, bbox.height
             boxes.append([x, y, x + w, y + h])
-            labels.append(bbox.class_id)
+            labels.append(bbox.category_id)
 
         boxes_tensor = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4))
         labels_tensor = torch.tensor(labels, dtype=torch.int64) if labels else torch.zeros(0, dtype=torch.int64)
@@ -419,7 +422,7 @@ class InMemoryChunkDataset(Dataset):
         for bbox in bboxes:
             x, y, w, h = bbox.x, bbox.y, bbox.width, bbox.height
             boxes.append([x, y, x + w, y + h])
-            labels.append(bbox.class_id)
+            labels.append(bbox.category_id)
 
         boxes_tensor = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4))
         labels_tensor = torch.tensor(labels, dtype=torch.int64) if labels else torch.zeros(0, dtype=torch.int64)
@@ -464,7 +467,10 @@ class InMemoryChunkDataset(Dataset):
                 metadata = json.load(f)
 
             events = metadata.get("events", [])
-            file_chunks = chunker.process_file(str(audio_path), events)
+            from rf_detr_finetuning.dataprocessor import load_audio_file
+
+            audio, sr = load_audio_file(str(audio_path))
+            file_chunks = chunker.chunk_audio(audio, sr, events=events, source_uuid=Path(audio_path).stem)
 
             for chunk in file_chunks:
                 chunk_meta = {

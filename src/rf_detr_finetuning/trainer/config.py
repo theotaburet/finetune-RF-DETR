@@ -39,9 +39,11 @@ class OptimizerConfig:
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary for optimizer construction."""
         return {
+            "name": self.name,
             "lr": self.lr,
             "weight_decay": self.weight_decay,
-            "betas": self.betas,
+            "momentum": self.momentum,
+            "betas": list(self.betas),
             "eps": self.eps,
         }
 
@@ -158,7 +160,8 @@ class TrainerConfig:
             TrainerConfig instance.
 
         """
-        # Extract nested configs
+        # Extract nested configs (copy to avoid mutating caller's dict)
+        config_dict = dict(config_dict)
         optimizer_dict = config_dict.pop("optimizer", {})
         scheduler_dict = config_dict.pop("scheduler", {})
         checkpoint_dict = config_dict.pop("checkpoint", {})
@@ -197,7 +200,12 @@ class TrainerConfig:
         return cls.from_dict(config_dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to dictionary.
+
+        Includes all fields so that ``from_dict(config.to_dict())`` produces an
+        equivalent configuration (roundtrip-safe).
+
+        """
         return {
             "epochs": self.epochs,
             "batch_size": self.batch_size,
@@ -211,19 +219,23 @@ class TrainerConfig:
             "log_every_n_steps": self.log_every_n_steps,
             "seed": self.seed,
             "deterministic": self.deterministic,
-            "optimizer": {
-                "name": self.optimizer.name,
-                "lr": self.optimizer.lr,
-                "weight_decay": self.optimizer.weight_decay,
-            },
+            "optimizer": self.optimizer.to_dict(),
             "scheduler": {
                 "name": self.scheduler.name,
                 "warmup_epochs": self.scheduler.warmup_epochs,
+                "warmup_lr": self.scheduler.warmup_lr,
                 "min_lr": self.scheduler.min_lr,
+                "step_size": self.scheduler.step_size,
+                "gamma": self.scheduler.gamma,
+                "patience": self.scheduler.patience,
             },
             "checkpoint": {
                 "save_dir": str(self.checkpoint.save_dir),
                 "save_every_n_epochs": self.checkpoint.save_every_n_epochs,
                 "save_best": self.checkpoint.save_best,
+                "best_metric": self.checkpoint.best_metric,
+                "best_mode": self.checkpoint.best_mode,
+                "keep_last_n": self.checkpoint.keep_last_n,
+                "resume_from": str(self.checkpoint.resume_from) if self.checkpoint.resume_from else None,
             },
         }

@@ -157,6 +157,24 @@ class InferConfig:
 
 
 @dataclass
+class DownloadStepConfig:
+    """Download step configuration for fetching data from EKB API."""
+
+    enabled: bool = False
+    config_file: str | None = None  # Path to download.yaml config
+    api_url: str = ""
+    api_token: str = ""
+    output_dir: str = "data/downloaded"
+    # Test mode: limit downloads to this many labels (None = no limit)
+    max_labels: int | None = None
+    # Force re-download even if data appears unchanged
+    force: bool = False
+    # Filters
+    sources: list[str] | None = None
+    label_hierarchy: str | None = None
+
+
+@dataclass
 class PipelineConfig:
     """Full pipeline configuration."""
 
@@ -168,6 +186,7 @@ class PipelineConfig:
     classes_file: str | None = None
 
     # Step configurations
+    download: DownloadStepConfig = field(default_factory=DownloadStepConfig)
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     split: SplitConfig = field(default_factory=SplitConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
@@ -189,6 +208,8 @@ class PipelineConfig:
         config.classes_file = data.get("classes_file", config.classes_file)
 
         # Step configs
+        if "download" in data:
+            config.download = DownloadStepConfig(**data["download"])
         if "preprocess" in data:
             config.preprocess = PreprocessConfig(**data["preprocess"])
         if "split" in data:
@@ -209,6 +230,17 @@ class PipelineConfig:
             "description": self.description,
             "class_names": self.class_names,
             "classes_file": self.classes_file,
+            "download": {
+                "enabled": self.download.enabled,
+                "config_file": self.download.config_file,
+                "api_url": self.download.api_url,
+                "api_token": self.download.api_token,
+                "output_dir": self.download.output_dir,
+                "max_labels": self.download.max_labels,
+                "force": self.download.force,
+                "sources": self.download.sources,
+                "label_hierarchy": self.download.label_hierarchy,
+            },
             "preprocess": {
                 "enabled": self.preprocess.enabled,
                 "audio_dir": self.preprocess.audio_dir,
@@ -434,6 +466,274 @@ class PipelineStep:
 
         """
         return {"step": self.name, "action": "would execute"}
+
+
+class DownloadStep(PipelineStep):
+    """Download step: Fetch labeled data from EKB API."""
+
+    name = "download"
+
+    def validate(self) -> list[str]:
+        """Validate download configuration.
+
+        Returns:
+            List of validation error messages.
+
+        """
+        errors = []
+        cfg = self.config.download
+
+        # Check that we have API credentials (either direct or via config file)
+        if cfg.config_file:
+            if not Path(cfg.config_file).exists():
+                errors.append(f"Download config file not found: {cfg.config_file}")
+        else:
+            if not cfg.api_url:
+                errors.append("API URL is required (download.api_url or download.config_file)")
+            if not cfg.api_token:
+                errors.append("API token is required (download.api_token or download.config_file)")
+
+        return errors
+
+    def _load_download_config(self) -> Any:
+        """Load DownloadConfig from file or pipeline config.
+
+        Returns:
+            DownloadConfig instance.
+
+        """
+        # Import here to avoid circular imports at module level
+        from run_download_data import DownloadConfig
+
+        cfg = self.config.download
+
+        if cfg.config_file and Path(cfg.config_file).exists():
+            # Load from YAML file
+            download_config = DownloadConfig.from_yaml(Path(cfg.config_file))
+        else:
+            # Build from pipeline config
+            download_config = DownloadConfig()
+            download_config.api.url = cfg.api_url
+            download_config.api.token = cfg.api_token
+            download_config.output.dir = cfg.output_dir
+
+        # Apply overrides from pipeline config
+        if cfg.max_labels is not None:
+            download_config.limits.max_labels = cfg.max_labels
+        if cfg.sources is not None:
+            download_config.filters.sources = cfg.sources
+        if cfg.label_hierarchy is not None:
+            download_config.filters.label_hierarchy = cfg.label_hierarchy
+
+        return download_config
+
+    def _check_for_changes(self, download_config: Any) -> dict[str, Any]:
+        """Check if remote data has changed since last download.
+
+        Compares the current API label count with the cached metadata.
+
+        Args:
+            download_config: Download configuration.
+
+        Returns:
+            Dictionary with change detection results:
+            - needs_download: bool indicating if download is needed
+            - reason: string explaining why
+            - cached_count: number of labels in cache (or None)
+            - remote_count: number of labels from API (or None)
+
+        """
+        from run_download_data import EKBAPIClient
+
+        metadata_path = (
+            Path(download_config.output.dir) / download_config.output.metadata_dir / "download_metadata.json"
+        )
+
+        # Check if metadata exists
+        if not metadata_path.exists():
+            return {
+                "needs_download": True,
+                "reason": "No previous download metadata found",
+                "cached_count": None,
+                "remote_count": None,
+            }
+
+        # Load cached metadata
+        try:
+            with open(metadata_path) as f:
+                cached_metadata = json.load(f)
+            cached_count = cached_metadata.get("download_info", {}).get("total_sounds", 0)
+        except (OSError, json.JSONDecodeError) as e:
+            return {
+                "needs_download": True,
+                "reason": f"Could not read cached metadata: {e}",
+                "cached_count": None,
+                "remote_count": None,
+            }
+
+        # Query API for current label count
+        try:
+            api_client = EKBAPIClient(
+                base_url=download_config.api.url,
+                token=download_config.api.token,
+            )
+
+            # Build filters
+            filters = {}
+            if download_config.filters.sources:
+                filters["sources"] = download_config.filters.sources
+            if download_config.filters.label_hierarchy:
+                filters["label_hierarchy"] = download_config.filters.label_hierarchy
+
+            # Just get count (limit=1 to minimize data transfer)
+            response = api_client.list_labels(limit=1, **filters)
+            remote_count = response.get("total", 0)
+
+        except Exception as e:
+            return {
+                "needs_download": True,
+                "reason": f"Could not query API for changes: {e}",
+                "cached_count": cached_count,
+                "remote_count": None,
+            }
+
+        # Compare counts
+        if remote_count != cached_count:
+            return {
+                "needs_download": True,
+                "reason": f"Label count changed: {cached_count} cached vs {remote_count} remote",
+                "cached_count": cached_count,
+                "remote_count": remote_count,
+            }
+
+        return {
+            "needs_download": False,
+            "reason": f"Data unchanged ({cached_count} labels)",
+            "cached_count": cached_count,
+            "remote_count": remote_count,
+        }
+
+    def run(self) -> bool:
+        """Execute the download step.
+
+        Returns:
+            True if successful, False otherwise.
+
+        """
+        from run_download_data import DataDownloader, EKBAPIClient
+
+        cfg = self.config.download
+        console.print("\n[bold cyan]Step: Download[/bold cyan]")
+        console.print(f"  Output dir: {cfg.output_dir}")
+
+        if cfg.max_labels:
+            console.print(f"  Max labels (test mode): {cfg.max_labels}")
+
+        # Load download config
+        download_config = self._load_download_config()
+
+        # Check for changes (unless force is set)
+        if not cfg.force:
+            change_info = self._check_for_changes(download_config)
+            console.print(f"  Change detection: {change_info['reason']}")
+
+            if not change_info["needs_download"]:
+                console.print("  [green]✓[/green] Data is up to date, skipping download")
+                self.results = {
+                    "status": "skipped",
+                    "reason": change_info["reason"],
+                    "cached_count": change_info["cached_count"],
+                }
+                return True
+        else:
+            console.print("  [yellow]Force mode enabled, skipping change detection[/yellow]")
+
+        if self.dry_run:
+            report = self.dry_run_report()
+            self.results = report
+            console.print("  [yellow]DRY RUN[/yellow] - would download:")
+            for k, v in report.items():
+                console.print(f"    {k}: {v}")
+            return True
+
+        try:
+            # Initialize API client
+            api_client = EKBAPIClient(
+                base_url=download_config.api.url,
+                token=download_config.api.token,
+            )
+
+            # Initialize downloader
+            downloader = DataDownloader(
+                api_client=api_client,
+                config=download_config,
+                dry_run=False,
+            )
+
+            # Run download
+            results = downloader.run()
+
+            successful = sum(1 for r in results if r.success)
+            failed = sum(1 for r in results if not r.success)
+
+            self.results = {
+                "total_sounds": len(results),
+                "successful": successful,
+                "failed": failed,
+                "output_dir": str(download_config.output.dir),
+            }
+
+            if failed > 0:
+                console.print(f"  [yellow]![/yellow] {failed} downloads failed")
+
+            console.print(f"  [green]✓[/green] Downloaded {successful} sounds")
+            return failed == 0
+
+        except Exception as e:
+            logger.error(f"Download failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+    def dry_run_report(self) -> dict[str, Any]:
+        """Report download plan."""
+        cfg = self.config.download
+        download_config = self._load_download_config()
+
+        # Try to get label count from API
+        label_count = "unknown"
+        try:
+            from run_download_data import EKBAPIClient
+
+            api_client = EKBAPIClient(
+                base_url=download_config.api.url,
+                token=download_config.api.token,
+            )
+
+            filters = {}
+            if download_config.filters.sources:
+                filters["sources"] = download_config.filters.sources
+            if download_config.filters.label_hierarchy:
+                filters["label_hierarchy"] = download_config.filters.label_hierarchy
+
+            response = api_client.list_labels(limit=1, **filters)
+            label_count = response.get("total", 0)
+
+            # Apply max_labels limit
+            if cfg.max_labels and label_count > cfg.max_labels:
+                label_count = f"{cfg.max_labels} (limited from {response.get('total', 0)})"
+
+        except Exception as e:
+            label_count = f"error: {e}"
+
+        return {
+            "api_url": download_config.api.url,
+            "output_dir": download_config.output.dir,
+            "label_count": label_count,
+            "max_labels": cfg.max_labels,
+            "filters": download_config.filters.to_dict() if hasattr(download_config.filters, "to_dict") else {},
+        }
 
 
 class PreprocessStep(PipelineStep):
@@ -1264,6 +1564,7 @@ class Pipeline:
     """Main pipeline orchestrator."""
 
     STEPS = [
+        ("download", DownloadStep),
         ("preprocess", PreprocessStep),
         ("split", SplitStep),
         ("train", TrainStep),
@@ -1283,6 +1584,7 @@ class Pipeline:
 
     def run(
         self,
+        download: bool | None = None,
         preprocess: bool | None = None,
         split: bool | None = None,
         train: bool | None = None,
@@ -1294,6 +1596,7 @@ class Pipeline:
         """Run the pipeline with selected steps.
 
         Args:
+            download: Override download step enabled.
             preprocess: Override preprocess step enabled.
             split: Override split step enabled.
             train: Override train step enabled.
@@ -1310,6 +1613,7 @@ class Pipeline:
         steps_to_run = []
 
         overrides = {
+            "download": download,
             "preprocess": preprocess,
             "split": split,
             "train": train,
@@ -1352,8 +1656,9 @@ class Pipeline:
 
         # Validate steps - but skip validation for steps whose inputs
         # will be created by earlier steps in this run
-        # Dependencies: split->preprocess, train->split, evaluate->train, infer->train
+        # Dependencies: preprocess->download, split->preprocess, train->split, etc.
         step_dependencies = {
+            "preprocess": ["download"],  # preprocess needs downloaded data
             "split": ["preprocess"],  # split needs preprocess output
             "train": ["split"],  # train needs split output
             "evaluate": ["train"],  # evaluate needs trained model
@@ -1502,6 +1807,11 @@ def parse_args() -> argparse.Namespace:
         help="Run all pipeline steps",
     )
     step_group.add_argument(
+        "--download",
+        action="store_true",
+        help="Run download step (fetch data from EKB API)",
+    )
+    step_group.add_argument(
         "--preprocess",
         action="store_true",
         help="Run preprocessing step",
@@ -1529,6 +1839,11 @@ def parse_args() -> argparse.Namespace:
 
     # Skip toggles
     skip_group = parser.add_argument_group("Skip Steps")
+    skip_group.add_argument(
+        "--no-download",
+        action="store_true",
+        help="Skip download step",
+    )
     skip_group.add_argument(
         "--no-preprocess",
         action="store_true",
@@ -1591,8 +1906,9 @@ def main() -> int:
     # Determine step overrides
     # If specific steps are requested, use those
     # If --no-X is specified, disable that step
-    any_step_requested = args.preprocess or args.split or args.train or args.evaluate or args.infer
+    any_step_requested = args.download or args.preprocess or args.split or args.train or args.evaluate or args.infer
 
+    download = None
     preprocess = None
     split = None
     train = None
@@ -1600,6 +1916,7 @@ def main() -> int:
     infer = None
 
     if any_step_requested:
+        download = args.download
         preprocess = args.preprocess
         split = args.split
         train = args.train
@@ -1607,6 +1924,8 @@ def main() -> int:
         infer = args.infer
     else:
         # Use config defaults, but apply --no-X overrides
+        if args.no_download:
+            download = False
         if args.no_preprocess:
             preprocess = False
         if args.no_split:
@@ -1617,6 +1936,7 @@ def main() -> int:
     # Run pipeline
     pipeline = Pipeline(config)
     success = pipeline.run(
+        download=download,
         preprocess=preprocess,
         split=split,
         train=train,

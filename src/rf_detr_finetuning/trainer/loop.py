@@ -16,7 +16,7 @@ from typing import Any, Protocol
 
 import torch
 from torch import nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.data import DataLoader
@@ -318,7 +318,7 @@ class Trainer:
 
         # Forward pass with optional AMP
         if self.config.mixed_precision:
-            with autocast():
+            with autocast(device_type=self.device.type):
                 if self.loss_fn is not None:
                     outputs = self.model(images)
                     loss = self.loss_fn(outputs, targets)

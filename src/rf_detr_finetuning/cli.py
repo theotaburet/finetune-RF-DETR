@@ -152,12 +152,11 @@ def audio_to_coco(
     input_dir: str,
     output_dir: str,
     split_ratios: str = "0.7,0.2,0.1",
-    n_fft: int = 2048,
-    hop_length: int = 512,
     n_mels: int = 128,
+    fft_ms: float = 25.0,
+    hop_ms: float = 10.0,
     fmin: float = 0.0,
     fmax: float | None = None,
-    target_sr: int | None = None,
     frequency_bins: str | None = None,
     auto_infer_bins: int | None = None,
 ) -> str:
@@ -167,12 +166,11 @@ def audio_to_coco(
         input_dir: Input directory containing audio files (.flac, .wav, etc.) with matching .json metadata.
         output_dir: Output directory for the COCO-format dataset with spectrogram images.
         split_ratios: Train,valid,test split ratios as comma-separated values (default: "0.7,0.2,0.1").
-        n_fft: FFT window size (default: 2048).
-        hop_length: Hop length for STFT (default: 512).
         n_mels: Number of mel filterbanks (default: 128).
+        fft_ms: FFT window duration in milliseconds (default: 25.0).
+        hop_ms: Hop duration in milliseconds (default: 10.0).
         fmin: Minimum frequency for mel filterbank in Hz (default: 0.0).
         fmax: Maximum frequency for mel filterbank in Hz (default: sr/2).
-        target_sr: Target sample rate for resampling (default: keep original).
         frequency_bins: Frequency bins for category splitting, format: 'min1,max1,name1;min2,max2,name2'.
             Example: '0,500,low;500,5000,mid;5000,22050,high' creates separate categories
             for events in different frequency bands (useful for distinguishing ship noise from sonar).
@@ -185,10 +183,9 @@ def audio_to_coco(
     """
     ratios = tuple(float(x) for x in split_ratios.split(","))
 
-    # Create AudioChunker from parameters
     fft_config = TimeBasedFFTConfig(
-        fft_ms=25.0,  # Default, will be overridden by n_fft calculation
-        hop_ms=10.0,  # Default, will be overridden by hop_length calculation
+        fft_ms=fft_ms,
+        hop_ms=hop_ms,
         n_mels=n_mels,
     )
 
@@ -417,9 +414,109 @@ def chunk_audio(
     return str(output_path)
 
 
+def download_ekb_labels(
+    api_url: str,
+    token: str,
+    output_dir: str,
+    source: str | None = None,
+    label_hierarchy: str | None = None,
+    labeler: str | None = None,
+    from_date: str | None = None,
+    to_date: str | None = None,
+    confidence_min: float | None = None,
+    confidence_max: float | None = None,
+    min_duration: float | None = None,
+    max_frequency: int | None = None,
+    max_labels: int | None = None,
+    seed: int | None = None,
+    dry_run: bool = False,
+) -> None:
+    """Download human-annotated audio events from EKB API.
+
+    Groups overlapping events into minimal enclosing sounds. This helps the
+    network learn overlapping events without penalizing it wrongly.
+
+    Args:
+        api_url: Base URL of the EKB API (e.g., "https://api.example.com/ekb/api").
+        token: Bearer token for API authentication.
+        output_dir: Directory to save downloaded audio files and metadata.
+        source: Comma-separated list of source names to filter by.
+        label_hierarchy: Filter by label hierarchy (partial match supported).
+        labeler: Filter by labeler name/email.
+        from_date: Filter labels created from this date (YYYY-MM-DD).
+        to_date: Filter labels created up to this date (YYYY-MM-DD).
+        confidence_min: Minimum confidence score (0.0-1.0).
+        confidence_max: Maximum confidence score (0.0-1.0).
+        min_duration: Minimum event duration in milliseconds.
+        max_frequency: Maximum frequency in Hz.
+        max_labels: Maximum number of labels to download.
+        seed: Random seed for reproducibility.
+        dry_run: Preview what would be downloaded without downloading.
+
+    Example:
+        # Download ship sounds with overlapping events grouped
+        download_ekb_labels(
+            api_url="https://api.example.com/ekb/api",
+            token="your_token_here",
+            output_dir="data/ships",
+            label_hierarchy="marine/ship",
+            seed=42,
+        )
+
+    """
+    import subprocess
+    import sys
+
+    # Resolve script path relative to the project root (one level above the package)
+    script_path = Path(__file__).resolve().parents[2] / "run_download_data.py"
+    if not script_path.exists():
+        raise FileNotFoundError(
+            f"run_download_data.py not found at {script_path}. Ensure the script exists in the project root directory."
+        )
+
+    cmd = [
+        sys.executable,
+        str(script_path),
+        "--api-url",
+        api_url,
+        "--token",
+        token,
+        "--output-dir",
+        output_dir,
+    ]
+
+    if source:
+        cmd.extend(["--source", source])
+    if label_hierarchy:
+        cmd.extend(["--label-hierarchy", label_hierarchy])
+    if labeler:
+        cmd.extend(["--labeler", labeler])
+    if from_date:
+        cmd.extend(["--from-date", from_date])
+    if to_date:
+        cmd.extend(["--to-date", to_date])
+    if confidence_min is not None:
+        cmd.extend(["--confidence-min", str(confidence_min)])
+    if confidence_max is not None:
+        cmd.extend(["--confidence-max", str(confidence_max)])
+    if min_duration is not None:
+        cmd.extend(["--min-duration", str(min_duration)])
+    if max_frequency is not None:
+        cmd.extend(["--max-frequency", str(max_frequency)])
+    if max_labels is not None:
+        cmd.extend(["--max-labels", str(max_labels)])
+    if seed is not None:
+        cmd.extend(["--seed", str(seed)])
+    if dry_run:
+        cmd.append("--dry-run")
+
+    subprocess.run(cmd, check=True)
+
+
 commands = {
     "download": {
         "kaggle-dataset": download_kaggle_dataset,
+        "ekb-labels": download_ekb_labels,
     },
     "convert": {
         "yolo-to-coco": convert_yolo_to_coco,

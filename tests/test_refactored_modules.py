@@ -18,18 +18,91 @@ class TestModuleImports:
 
     def test_import_dataprocessor(self):
         """Test dataprocessor module imports."""
+        from rf_detr_finetuning.dataprocessor import (
+            AudioChunker,
+            ChunkConfig,
+            TimeBasedFFTConfig,
+            compute_mel_spectrogram,
+            load_audio_file,
+            resize_spectrogram,
+        )
+
+        assert callable(AudioChunker)
+        assert callable(compute_mel_spectrogram)
+        assert callable(load_audio_file)
+        assert callable(resize_spectrogram)
+        assert callable(ChunkConfig)
+        assert callable(TimeBasedFFTConfig)
 
     def test_import_dataloader(self):
         """Test dataloader module imports."""
+        from rf_detr_finetuning.dataloader import (
+            AudioChunkDataset,
+            COCODatasetBuilder,
+            SplitConfig,
+            collate_detections,
+            convert_audio_to_coco,
+            parse_frequency_bins,
+        )
+
+        assert callable(AudioChunkDataset)
+        assert callable(COCODatasetBuilder)
+        assert callable(SplitConfig)
+        assert callable(collate_detections)
+        assert callable(convert_audio_to_coco)
+        assert callable(parse_frequency_bins)
 
     def test_import_trainer(self):
         """Test trainer module imports."""
+        from rf_detr_finetuning.trainer import (
+            CheckpointConfig,
+            OptimizerConfig,
+            SchedulerConfig,
+            Trainer,
+            TrainerConfig,
+            TrainingState,
+        )
+
+        assert callable(Trainer)
+        assert callable(TrainerConfig)
+        assert callable(TrainingState)
+        assert callable(OptimizerConfig)
+        assert callable(SchedulerConfig)
+        assert callable(CheckpointConfig)
 
     def test_import_predictor(self):
         """Test predictor module imports."""
+        from rf_detr_finetuning.predictor import (
+            AudioPredictor,
+            Detection,
+            PredictionResult,
+            Predictor,
+        )
+
+        assert callable(Predictor)
+        assert callable(Detection)
+        assert callable(PredictionResult)
+        assert callable(AudioPredictor)
 
     def test_import_eventprocessor(self):
         """Test eventprocessor module imports."""
+        from rf_detr_finetuning.eventprocessor import (
+            AudioEvent,
+            EventList,
+            EventMerger,
+            EventPostProcessor,
+            MergeConfig,
+            nms_merge,
+            temporal_merge,
+        )
+
+        assert callable(AudioEvent)
+        assert callable(EventList)
+        assert callable(EventMerger)
+        assert callable(MergeConfig)
+        assert callable(EventPostProcessor)
+        assert callable(nms_merge)
+        assert callable(temporal_merge)
 
     def test_import_main_package(self):
         """Test main package imports all modules."""
@@ -315,10 +388,27 @@ class TestLegacyCompatibility:
     """Test backward compatibility with legacy API."""
 
     def test_legacy_chunking_imports(self):
-        """Test legacy chunking imports still work."""
+        """Test that chunking classes are accessible from the main package."""
+        import rf_detr_finetuning
+
+        assert hasattr(rf_detr_finetuning, "AudioChunker")
+        # Verify the class is the real one, not a stub
+        from rf_detr_finetuning.dataprocessor import AudioChunker
+
+        assert rf_detr_finetuning.AudioChunker is AudioChunker
 
     def test_legacy_coco_conversion(self):
-        """Test legacy COCO conversion still available."""
+        """Test that COCO conversion is accessible from the main package."""
+        import rf_detr_finetuning
+
+        assert hasattr(rf_detr_finetuning, "convert_audio_to_coco")
+        from rf_detr_finetuning.dataloader import convert_audio_to_coco
+
+        assert rf_detr_finetuning.convert_audio_to_coco is convert_audio_to_coco
 
     def test_legacy_finetune(self):
-        """Test legacy finetune function available."""
+        """Test that finetune_model is accessible from the main package."""
+        import rf_detr_finetuning
+
+        assert hasattr(rf_detr_finetuning, "finetune_model")
+        assert callable(rf_detr_finetuning.finetune_model)
