@@ -759,12 +759,14 @@ class EKBAPIClient:
     def fetch_all_labels(
         self,
         batch_size: int = 100,
+        quiet: bool = False,
         **filters: Any,
     ) -> Iterator[dict]:
         """Fetch all labels with pagination.
 
         Args:
             batch_size: Number of labels per request.
+            quiet: If True, suppress progress output.
             **filters: Additional filters to pass to list_labels.
 
         Yields:
@@ -773,6 +775,7 @@ class EKBAPIClient:
         """
         offset = 0
         total = None
+        last_reported = 0
 
         while total is None or offset < total:
             response = self.list_labels(limit=batch_size, offset=offset, **filters)
@@ -785,7 +788,13 @@ class EKBAPIClient:
             yield from labels
 
             offset += len(labels)
-            console.print(f"  [dim]Fetched {offset}/{total} labels...[/dim]")
+
+            # Only print progress at 25%, 50%, 75%, 100% or if total < 500
+            if not quiet and total > 0:
+                progress_pct = (offset / total) * 100
+                if total < 500 or offset == total or (progress_pct - last_reported) >= 25:
+                    console.print(f"  [dim]Fetched {offset}/{total} labels[/dim]")
+                    last_reported = progress_pct
 
 
 # =============================================================================
@@ -931,10 +940,18 @@ def split_sounds_into_datasets(
         test_indices = set()
         remaining_indices = []
 
+        # Pre-compute filename-only versions of test_source_files for matching
+        test_source_filenames = {Path(f).name for f in config.test_source_files}
+        test_source_paths = set(config.test_source_files)
+
+        # Collect all unique source files for debugging
+        all_source_files = {sound.source_file for sound in sounds}
+
         for i, sound in enumerate(sounds):
-            # Extract filename from source_file path
             source_filename = Path(sound.source_file).name
-            if source_filename in config.test_source_files:
+            source_path = sound.source_file
+            # Match against either the filename OR the full path
+            if source_filename in test_source_filenames or source_path in test_source_paths:
                 test_indices.add(i)
             else:
                 remaining_indices.append(i)
@@ -942,15 +959,25 @@ def split_sounds_into_datasets(
         remaining_indices = np.array(remaining_indices)
 
         found_test_files = len(test_indices)
-        console.print(f"  Test set: {found_test_files} files from specified source files")
-        if dry_run:
-            console.print(f"    [dim]Source files: {config.test_source_files}[/dim]")
+        matched_source_files = {sounds[i].source_file for i in test_indices}
+
+        console.print(f"  Test set: {found_test_files} sounds from {len(matched_source_files)} source file(s)")
+        if matched_source_files:
+            for f in matched_source_files:
+                console.print(f"    [green]✓[/green] {f}")
+        else:
+            console.print("    [yellow]No source files matched![/yellow]")
+            console.print(f"    [dim]Available: {all_source_files}[/dim]")
 
         # Warn about missing files
-        found_source_files = {Path(sounds[i].source_file).name for i in test_indices}
-        missing_files = set(config.test_source_files) - found_source_files
+        found_source_filenames = {Path(f).name for f in matched_source_files}
+        missing_files = set()
+        for test_file in config.test_source_files:
+            test_filename = Path(test_file).name
+            if test_file not in matched_source_files and test_filename not in found_source_filenames:
+                missing_files.add(test_file)
         if missing_files:
-            console.print(f"  [yellow]Warning: Could not find these test files: {missing_files}[/yellow]")
+            console.print(f"  [yellow]Warning: Could not find: {missing_files}[/yellow]")
     else:
         # Shuffle sounds for random selection
         sound_indices = np.arange(len(sounds))
@@ -961,10 +988,7 @@ def split_sounds_into_datasets(
         test_indices = set(sound_indices[:test_count].tolist())
         remaining_indices = sound_indices[test_count:]
 
-        console.print(f"  Test set: {test_count} files (randomly selected)")
-
-        if dry_run:
-            console.print(f"  [yellow]DRY RUN - Would reserve {test_count} random files for test set[/yellow]")
+        console.print(f"  Test set: {test_count} sounds (randomly selected)")
 
     # Split remaining into train/val
     if len(remaining_indices) > 0:
@@ -989,11 +1013,27 @@ def split_sounds_into_datasets(
         "test": [sounds[i] for i in test_indices],
     }
 
-    console.print(f"  Train set: {len(splits['train'])} files ({config.train_ratio:.0%})")
-    console.print(f"  Val set: {len(splits['val'])} files ({config.val_ratio:.0%})")
-    console.print(f"  Test set: {len(splits['test'])} files")
+    console.print(f"  Train set: {len(splits['train'])} sounds ({config.train_ratio:.0%})")
+    console.print(f"  Val set: {len(splits['val'])} sounds ({config.val_ratio:.0%})")
+    console.print(f"  Test set: {len(splits['test'])} sounds")
 
-    # Print class distribution
+    # Verify no overlap between test and train/val source files
+    train_sources = {s.source_file for s in splits["train"]}
+    val_sources = {s.source_file for s in splits["val"]}
+    test_sources = {s.source_file for s in splits["test"]}
+
+    train_test_overlap = train_sources & test_sources
+    val_test_overlap = val_sources & test_sources
+
+    if train_test_overlap or val_test_overlap:
+        if train_test_overlap:
+            console.print(f"  [red]ERROR: Train/Test overlap: {train_test_overlap}[/red]")
+        if val_test_overlap:
+            console.print(f"  [red]ERROR: Val/Test overlap: {val_test_overlap}[/red]")
+    else:
+        console.print("  [green]✓ No source file overlap between test and train/val[/green]")
+
+    # Print class distribution in dry run
     if dry_run:
         _print_class_distribution(splits)
 
@@ -1007,9 +1047,10 @@ def _stratified_split(
     rng: np.random.Generator,
     dry_run: bool,
 ) -> tuple[set[int], set[int]]:
-    """Perform stratified train/val split.
+    """Perform stratified train/val split with balanced validation.
 
-    Attempts to balance classes in the validation set.
+    Ensures the validation set has roughly equal samples per class,
+    regardless of class frequency in the overall dataset.
 
     Args:
         sounds: List of all sound segments.
@@ -1032,39 +1073,66 @@ def _stratified_split(
 
     n_val_target = len(indices) - n_train
     n_classes = len(label_to_indices)
-    target_per_class = max(1, n_val_target // n_classes) if n_classes > 0 else 1
 
-    if dry_run:
-        console.print(f"  [dim]Stratifying validation set across {n_classes} classes[/dim]")
-        console.print(f"  [dim]Target ~{target_per_class} samples per class in val set[/dim]")
+    if n_classes == 0:
+        return set(), set()
+
+    # Target equal samples per class in val set
+    target_per_class = max(1, n_val_target // n_classes)
 
     val_indices: list[int] = []
     train_indices: list[int] = []
 
-    # For each class, take some for val, rest for train
+    # For each class, take target_per_class for val (capped at available - 1 to keep at least 1 in train)
     for label, class_indices in label_to_indices.items():
         rng.shuffle(class_indices)
-        n_val_for_class = min(target_per_class, max(1, len(class_indices) // 5))
+        n_available = len(class_indices)
+        n_val_for_class = min(target_per_class, max(1, n_available - 1))
         val_indices.extend(class_indices[:n_val_for_class])
         train_indices.extend(class_indices[n_val_for_class:])
+
+    if dry_run:
+        console.print(f"  [dim]Balanced val: ~{target_per_class} samples/class across {n_classes} classes[/dim]")
 
     return set(train_indices), set(val_indices)
 
 
 def _print_class_distribution(splits: dict[str, list[SoundSegment]]) -> None:
-    """Print class distribution for each split."""
+    """Print class distribution for each split in a compact table format."""
+    # Collect all unique labels across all splits
+    all_labels: set[str] = set()
+    split_counts: dict[str, dict[str, int]] = {}
+
     for split_name, split_sounds in splits.items():
         if not split_sounds:
             continue
-
-        label_counts: dict[str, int] = {}
+        split_counts[split_name] = {}
         for sound in split_sounds:
             label = sound.primary_label
-            label_counts[label] = label_counts.get(label, 0) + 1
+            split_counts[split_name][label] = split_counts[split_name].get(label, 0) + 1
+            all_labels.add(label)
 
-        console.print(f"\n  [dim]{split_name.upper()} class distribution:[/dim]")
-        for label, count in sorted(label_counts.items(), key=lambda x: x[1], reverse=True):
-            console.print(f"    {label}: {count}")
+    if not all_labels:
+        return
+
+    # Print compact table
+    console.print("\n  [cyan]Class distribution:[/cyan]")
+
+    # Header
+    header = "    {:40s}".format("Label")
+    for split_name in ["train", "val", "test"]:
+        if split_name in split_counts:
+            header += f" {split_name.upper():>6s}"
+    console.print(f"  [dim]{header}[/dim]")
+
+    # Rows
+    for label in sorted(all_labels):
+        row = f"    {label[:40]:40s}"
+        for split_name in ["train", "val", "test"]:
+            if split_name in split_counts:
+                count = split_counts[split_name].get(label, 0)
+                row += f" {count:>6d}"
+        console.print(row)
 
 
 # =============================================================================
@@ -1321,6 +1389,9 @@ class DataDownloader:
         source file, groups overlapping events within each file, and downloads
         the resulting sound segments. Optionally splits into train/val/test.
 
+        When test_source_files is specified, those files are fetched first
+        (regardless of other filters) to ensure they are included in the test set.
+
         Returns:
             List of download results.
 
@@ -1330,7 +1401,7 @@ class DataDownloader:
         if self.dry_run:
             console.print("[yellow]DRY RUN MODE - No files will be downloaded[/yellow]")
 
-        # Build filters
+        # Build filters for train/val data
         filters = {}
         if self.config.filters.sources:
             filters["sources"] = self.config.filters.sources
@@ -1356,20 +1427,80 @@ class DataDownloader:
             console.print(f"  {key}: {value}")
         console.print(f"  seed: {self.config.advanced.seed}")
 
-        # Fetch all labels
-        console.print("\n[cyan]Fetching labels from API...[/cyan]")
-        all_labels: list[dict] = []
+        # Track labels separately for test vs train/val
+        test_labels: list[dict] = []
+        trainval_labels: list[dict] = []
+
+        # Pre-compute test source file matching sets
+        test_source_filenames = set()
+        test_source_paths = set()
+        if self.config.split.enabled and self.config.split.test_source_files:
+            test_source_filenames = {Path(f).name for f in self.config.split.test_source_files}
+            test_source_paths = set(self.config.split.test_source_files)
+
+        # Step 1: Fetch labels for test_source_files first (if specified)
+        if self.config.split.enabled and self.config.split.test_source_files:
+            console.print("\n[cyan]Fetching labels for TEST source files...[/cyan]")
+            console.print(f"  [dim]Looking for: {self.config.split.test_source_files}[/dim]")
+
+            for test_file in self.config.split.test_source_files:
+                # Use the filename for search (API search parameter)
+                test_filename = Path(test_file).name
+                console.print(f"  [dim]Searching for labels with source file: {test_filename}[/dim]")
+
+                # Fetch labels matching this test file using search
+                file_labels: list[dict] = []
+                for label in self.api_client.fetch_all_labels(
+                    batch_size=self.config.advanced.batch_size,
+                    search=test_filename,
+                    **{k: v for k, v in filters.items() if k != "sources"},  # Keep other filters except sources
+                ):
+                    # Verify the label is actually from this source file
+                    source_path = label.get("source_path", "")
+                    source_filename = Path(source_path).name
+                    if source_filename == test_filename or source_path == test_file:
+                        file_labels.append(label)
+
+                console.print(f"    [green]Found {len(file_labels)} labels for {test_filename}[/green]")
+                test_labels.extend(file_labels)
+
+            if not test_labels:
+                console.print("[yellow]Warning: No labels found for specified test source files[/yellow]")
+            else:
+                console.print(f"[green]Total TEST labels: {len(test_labels)}[/green]")
+
+        # Step 2: Fetch labels for train/val (excluding test source files)
+        console.print("\n[cyan]Fetching labels for TRAIN/VAL...[/cyan]")
+        fetched_count = 0
         for label in self.api_client.fetch_all_labels(batch_size=self.config.advanced.batch_size, **filters):
-            all_labels.append(label)
-            if self.config.limits.max_labels and len(all_labels) >= self.config.limits.max_labels:
+            # Skip labels from test source files
+            source_path = label.get("source_path", "")
+            source_filename = Path(source_path).name
+
+            if source_filename in test_source_filenames or source_path in test_source_paths:
+                logger.debug(f"  Skipping label from test source file: {source_path}")
+                continue
+
+            trainval_labels.append(label)
+            fetched_count += 1
+
+            if self.config.limits.max_labels and fetched_count >= self.config.limits.max_labels:
                 console.print(f"  [dim]Reached max_labels limit ({self.config.limits.max_labels})[/dim]")
                 break
+
+        console.print(f"[green]Total TRAIN/VAL labels: {len(trainval_labels)}[/green]")
+
+        # Combine all labels
+        all_labels = test_labels + trainval_labels
 
         if not all_labels:
             console.print("[yellow]No labels found matching the criteria[/yellow]")
             return []
 
-        console.print(f"[green]Found {len(all_labels)} labels[/green]")
+        console.print(
+            f"\n[green]Total labels: {len(all_labels)} "
+            f"(test={len(test_labels)}, train/val={len(trainval_labels)})[/green]"
+        )
 
         # Parse labels into events
         events = [parse_label_response(label) for label in all_labels]
@@ -1681,10 +1812,12 @@ Examples:
     )
 
     # Split arguments
+    # Use default=None so we can detect if the user explicitly set the flag
     parser.add_argument(
         "--split",
         action="store_true",
         dest="split",
+        default=None,
         help="Enable train/val/test splitting",
     )
     parser.add_argument(

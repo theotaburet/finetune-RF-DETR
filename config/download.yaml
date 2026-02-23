@@ -34,12 +34,12 @@ output:
 # Dataset Split Configuration
 split:
   # Whether to create train/val/test splits (default: false = download all to single dir)
-  enabled: false
+  enabled: true
 
   # Specific source files to use for test set (list of filenames)
   # These exact source files will be reserved for the test set
   # Example: ["file1.wav", "file2.wav", "file3.wav"]
-  test_source_files: []
+  test_source_files: ["sources/SanctSound_OC02/2206abf7adf77a98_OC02_05_210616165829.flac"]
 
   # Alternative: Number of random files for test set
   # Only used if test_source_files is empty
