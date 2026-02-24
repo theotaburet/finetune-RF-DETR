@@ -373,6 +373,7 @@ class DownloadResult:
         end_s: End time in source file.
         events: Events contained in this sound.
         success: Whether the download was successful.
+        skipped: Whether the download was skipped (file already exists).
         error: Error message if failed.
         split: Which split this sound belongs to (train/val/test).
 
@@ -385,6 +386,7 @@ class DownloadResult:
     end_s: float = 0.0
     events: list[dict] = field(default_factory=list)
     success: bool = False
+    skipped: bool = False
     error: str | None = None
     split: str = "unsplit"
 
@@ -399,6 +401,7 @@ class DownloadResult:
             "duration_s": self.end_s - self.start_s,
             "events": self.events,
             "success": self.success,
+            "skipped": self.skipped,
             "error": self.error,
             "split": self.split,
         }
@@ -1319,6 +1322,14 @@ class DataDownloader:
             result.success = True
             return result
 
+        # Skip download if both .wav and sidecar .json already exist
+        sidecar_path = output_path.with_suffix(".json")
+        if output_path.exists() and sidecar_path.exists():
+            result.success = True
+            result.skipped = True
+            logger.debug(f"Skipping (already exists): {output_filename}")
+            return result
+
         try:
             # Download the audio file
             audio_data = self.api_client.get_sound_file(source_label_id)
@@ -1687,6 +1698,7 @@ class DataDownloader:
 
         total_sounds = len(results)
         successful = sum(1 for r in results if r.success)
+        skipped = sum(1 for r in results if r.skipped)
         failed = total_sounds - successful
 
         # Event statistics
@@ -1704,6 +1716,8 @@ class DataDownloader:
         table.add_row("Total Events (before grouping)", str(total_events_before_grouping))
         table.add_row("Total Sounds (after grouping)", str(total_sounds))
         table.add_row("Successful", f"[green]{successful}[/green]")
+        if skipped > 0:
+            table.add_row("Skipped (already exist)", f"[yellow]{skipped}[/yellow]")
         table.add_row("Failed", f"[red]{failed}[/red]" if failed > 0 else "0")
         table.add_row("", "")
         table.add_row("Events contained in sounds", str(total_events_in_sounds))

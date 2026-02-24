@@ -141,7 +141,7 @@ class EventPostProcessor:
         # Sort by time
         event_list = event_list.sort_by_time()
 
-        logger.info(f"Final: {len(event_list)} events detected")
+        logger.debug(f"Final: {len(event_list)} events detected")
         return event_list
 
     def _window_to_events(

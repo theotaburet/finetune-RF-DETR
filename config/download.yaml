@@ -73,7 +73,7 @@ filters:
   to_date: null
 
   # Confidence score range (0.0-1.0)
-  confidence_min: null
+  confidence_min: 0.20
   confidence_max: null
 
   # Minimum duration in milliseconds

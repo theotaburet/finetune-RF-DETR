@@ -196,8 +196,14 @@ def optimize_default_only(
     total = default_search.num_combinations * global_search.num_combinations
     logger.info(f"Optimizing default params: {total} combinations")
 
+    # Diagnostic: summarize input data
+    total_raw = sum(len(e) for e in raw_events_per_file)
+    total_gt = sum(len(gt) for gt in ground_truths_per_file)
+    logger.info(f"Input: {len(raw_events_per_file)} files, {total_raw} raw predictions, {total_gt} ground truths")
+
     best = OptimizationResult()
     trial_idx = 0
+    max_score_seen = 0.0
 
     for dt, df, ss in itertools.product(
         default_search.delta_time_ms,
@@ -223,6 +229,21 @@ def optimize_default_only(
 
             score = getattr(eval_result.overall, metric, eval_result.overall.f1)
 
+            # Log first trial details for diagnostics
+            if trial_idx == 0:
+                total_merged = sum(len(m) for m in merged)
+                logger.info(
+                    f"First trial diagnostic: "
+                    f"dt={dt}ms df={df}Hz st={st} md={md}ms => "
+                    f"{total_merged} merged events, "
+                    f"TP={eval_result.overall.true_positives} "
+                    f"FP={eval_result.overall.false_positives} "
+                    f"FN={eval_result.overall.false_negatives} "
+                    f"F1={score:.4f}"
+                )
+
+            max_score_seen = max(max_score_seen, score)
+
             if score > best.best_f1:
                 best.best_f1 = score
                 best.best_config = config
@@ -233,6 +254,15 @@ def optimize_default_only(
                 progress_callback(trial_idx, total)
 
     best.trials_evaluated = trial_idx
+
+    if best.best_config is None:
+        logger.warning(
+            f"All {trial_idx} trials produced {metric}=0. "
+            f"Max {metric} seen: {max_score_seen:.6f}. "
+            f"This usually means predictions don't match ground truth "
+            f"(check class ID mapping and detection quality)."
+        )
+
     return best
 
 

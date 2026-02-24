@@ -475,16 +475,18 @@ class PipelineStep:
 
     name: str = "step"
 
-    def __init__(self, config: PipelineConfig, dry_run: bool = False) -> None:
+    def __init__(self, config: PipelineConfig, dry_run: bool = False, force: bool = False) -> None:
         """Initialize the pipeline step.
 
         Args:
             config: Pipeline configuration.
             dry_run: If True, validate and report without executing.
+            force: If True, skip cache and re-run even if output exists.
 
         """
         self.config = config
         self.dry_run = dry_run
+        self.force = force
         self.results: dict[str, Any] = {}
 
     def run(self) -> bool:
@@ -686,6 +688,7 @@ class DownloadStep(PipelineStep):
                 console.print("  [green]✓[/green] Data is up to date, skipping download")
                 self.results = {
                     "status": "skipped",
+                    "skipped": True,
                     "reason": change_info["reason"],
                     "cached_count": change_info["cached_count"],
                 }
@@ -927,6 +930,30 @@ class PreprocessStep(PipelineStep):
             if cfg.max_files:
                 audio_files = audio_files[: cfg.max_files]
 
+            # Check if preprocessing output already exists and is complete
+            coco_path = output_dir / "_annotations.coco.json"
+            if coco_path.exists() and not self.force:
+                with open(coco_path) as f:
+                    existing_coco = json.load(f)
+                existing_images = len(existing_coco.get("images", []))
+                existing_annotations = len(existing_coco.get("annotations", []))
+                if existing_images > 0 and existing_annotations > 0:
+                    console.print(
+                        f"  [yellow]Skipping[/yellow] - output already exists with "
+                        f"{existing_images} images, {existing_annotations} annotations"
+                    )
+                    self.results = {
+                        "num_images": existing_images,
+                        "num_annotations": existing_annotations,
+                        "num_classes": len(existing_coco.get("categories", [])),
+                        "skipped_already_processed": len(audio_files),
+                        "output_dir": str(output_dir),
+                        "skipped": True,
+                    }
+                    return True
+            elif coco_path.exists() and self.force:
+                console.print("  [cyan]Force re-run[/cyan] - upstream step changed, reprocessing...")
+
             # Build class mapping
             class_to_id = {}
             all_annotations = []
@@ -1107,6 +1134,11 @@ class SplitStep(PipelineStep):
     def run(self) -> bool:
         """Execute the dataset splitting step.
 
+        Respects pre-existing split structure from the download step.
+        If audio_dir contains train/val/test subdirectories, images are
+        assigned to splits based on which subdirectory their source audio
+        came from. Otherwise, falls back to random splitting.
+
         Returns:
             True if successful, False otherwise.
 
@@ -1115,7 +1147,6 @@ class SplitStep(PipelineStep):
         console.print("\n[bold cyan]Step: Dataset Splitting[/bold cyan]")
         console.print(f"  Input dir: {cfg.input_dir}")
         console.print(f"  Output dir: {cfg.output_dir}")
-        console.print(f"  Ratios: train={cfg.train_ratio}, val={cfg.val_ratio}, test={cfg.test_ratio}")
 
         if self.dry_run:
             n_images = 0
@@ -1137,10 +1168,40 @@ class SplitStep(PipelineStep):
             return True
 
         try:
+            import re
+
             import numpy as np
 
             input_dir = Path(cfg.input_dir)
             output_dir = Path(cfg.output_dir)
+
+            # Check if split output already exists and is complete
+            train_ann = output_dir / "train" / "_annotations.coco.json"
+            valid_ann = output_dir / "valid" / "_annotations.coco.json"
+            test_ann = output_dir / "test" / "_annotations.coco.json"
+            if train_ann.exists() and valid_ann.exists() and test_ann.exists() and not self.force:
+                with open(train_ann) as f:
+                    n_train = len(json.load(f).get("images", []))
+                with open(valid_ann) as f:
+                    n_val = len(json.load(f).get("images", []))
+                with open(test_ann) as f:
+                    n_test = len(json.load(f).get("images", []))
+                if n_train > 0:
+                    console.print(
+                        f"  [yellow]Skipping[/yellow] - split output already exists "
+                        f"(train={n_train}, val={n_val}, test={n_test})"
+                    )
+                    self.results = {
+                        "train_images": n_train,
+                        "val_images": n_val,
+                        "test_images": n_test,
+                        "output_dir": str(output_dir),
+                        "skipped": True,
+                    }
+                    return True
+
+            if self.force:
+                console.print("  [cyan]Force re-run[/cyan] - upstream step changed, re-splitting...")
 
             # Load COCO data
             console.print("  Loading COCO annotations...")
@@ -1148,46 +1209,120 @@ class SplitStep(PipelineStep):
                 coco_data = json.load(f)
             console.print(f"  Loaded {len(coco_data['images'])} images")
 
-            # Split indices
-            console.print("  Computing splits...")
-            n = len(coco_data["images"])
-            indices = np.arange(n)
-            rng = np.random.default_rng(cfg.seed)
-            rng.shuffle(indices)
-
-            n_train = int(n * cfg.train_ratio)
-            n_val = int(n * cfg.val_ratio)
-
-            train_indices = set(indices[:n_train].tolist())
-            val_indices = set(indices[n_train : n_train + n_val].tolist())
-
-            # Build image_id mapping
-            id_to_idx = {img["id"]: i for i, img in enumerate(coco_data["images"])}
-
-            # Create split data structures
-            splits = {
-                "train": {"images": [], "annotations": [], "categories": coco_data["categories"]},
-                "valid": {"images": [], "annotations": [], "categories": coco_data["categories"]},
-                "test": {"images": [], "annotations": [], "categories": coco_data["categories"]},
+            # Check if audio_dir has pre-existing split subdirectories
+            audio_dir = Path(self.config.preprocess.audio_dir)
+            split_dirs = {
+                "train": audio_dir / "train",
+                "valid": audio_dir / "valid",
+                "test": audio_dir / "test",
             }
+            has_presplit = any(d.exists() for d in split_dirs.values())
 
-            for i, img in enumerate(coco_data["images"]):
-                if i in train_indices:
-                    splits["train"]["images"].append(img)
-                elif i in val_indices:
-                    splits["valid"]["images"].append(img)
-                else:
-                    splits["test"]["images"].append(img)
+            if has_presplit:
+                console.print("  Detected pre-existing splits from download step")
+                # Build mapping: audio_stem -> split_name
+                stem_to_split = {}
+                audio_exts = {".wav", ".flac", ".mp3"}
+                for split_name, split_path in split_dirs.items():
+                    if not split_path.exists():
+                        continue
+                    for f in split_path.iterdir():
+                        if f.suffix.lower() in audio_exts:
+                            stem_to_split[f.stem] = split_name
 
-            # Assign annotations
-            for ann in coco_data["annotations"]:
-                img_idx = id_to_idx.get(ann["image_id"])
-                if img_idx in train_indices:
-                    splits["train"]["annotations"].append(ann)
-                elif img_idx in val_indices:
-                    splits["valid"]["annotations"].append(ann)
-                else:
-                    splits["test"]["annotations"].append(ann)
+                # Map chunk images to splits using audio stem
+                # Image names follow pattern: {audio_stem}_chunk{NNNN}.png
+                chunk_pattern = re.compile(r"^(.+)_chunk\d+\.png$")
+
+                # Build image_id -> split mapping
+                image_split_map = {}
+                unmatched = 0
+                for i, img in enumerate(coco_data["images"]):
+                    img_name = Path(img["file_name"]).name
+                    match = chunk_pattern.match(img_name)
+                    if match:
+                        audio_stem = match.group(1)
+                        split = stem_to_split.get(audio_stem)
+                        if split:
+                            image_split_map[i] = split
+                        else:
+                            unmatched += 1
+                            image_split_map[i] = "train"  # fallback
+                    else:
+                        unmatched += 1
+                        image_split_map[i] = "train"
+
+                if unmatched > 0:
+                    console.print(
+                        f"  [yellow]![/yellow] {unmatched} images could not be mapped to a split, defaulting to train"
+                    )
+
+                # Assign images and annotations using the mapping
+                id_to_idx = {img["id"]: i for i, img in enumerate(coco_data["images"])}
+
+                splits = {
+                    "train": {"images": [], "annotations": [], "categories": coco_data["categories"]},
+                    "valid": {"images": [], "annotations": [], "categories": coco_data["categories"]},
+                    "test": {"images": [], "annotations": [], "categories": coco_data["categories"]},
+                }
+
+                # Map split directory names to output directory names
+                split_dir_name: dict[str, str] = {"train": "train", "valid": "valid", "test": "test"}
+
+                for i, img in enumerate(coco_data["images"]):
+                    split = image_split_map.get(i, "train")
+                    dir_name = split_dir_name.get(split, "train")
+                    splits[dir_name]["images"].append(img)
+
+                for ann in coco_data["annotations"]:
+                    img_idx = id_to_idx.get(ann["image_id"])
+                    if img_idx is not None:
+                        split = image_split_map.get(img_idx, "train")
+                        dir_name = split_dir_name.get(split, "train")
+                        splits[dir_name]["annotations"].append(ann)
+
+            else:
+                console.print(
+                    f"  No pre-existing splits found, using random split "
+                    f"(train={cfg.train_ratio}, val={cfg.val_ratio}, test={cfg.test_ratio})"
+                )
+
+                # Random shuffle split (original behavior)
+                n = len(coco_data["images"])
+                indices = np.arange(n)
+                rng = np.random.default_rng(cfg.seed)
+                rng.shuffle(indices)
+
+                n_train = int(n * cfg.train_ratio)
+                n_val = int(n * cfg.val_ratio)
+
+                train_indices = set(indices[:n_train].tolist())
+                val_indices = set(indices[n_train : n_train + n_val].tolist())
+
+                id_to_idx = {img["id"]: i for i, img in enumerate(coco_data["images"])}
+
+                splits = {
+                    "train": {"images": [], "annotations": [], "categories": coco_data["categories"]},
+                    "valid": {"images": [], "annotations": [], "categories": coco_data["categories"]},
+                    "test": {"images": [], "annotations": [], "categories": coco_data["categories"]},
+                }
+
+                for i, img in enumerate(coco_data["images"]):
+                    if i in train_indices:
+                        splits["train"]["images"].append(img)
+                    elif i in val_indices:
+                        splits["valid"]["images"].append(img)
+                    else:
+                        splits["test"]["images"].append(img)
+
+                for ann in coco_data["annotations"]:
+                    img_idx = id_to_idx.get(ann["image_id"])
+                    if img_idx in train_indices:
+                        splits["train"]["annotations"].append(ann)
+                    elif img_idx in val_indices:
+                        splits["valid"]["annotations"].append(ann)
+                    else:
+                        splits["test"]["annotations"].append(ann)
 
             # Count total images to copy
             total_images = sum(len(s.get("images", [])) for s in splits.values())
@@ -1646,6 +1781,27 @@ class OptimizeMergingStep(PipelineStep):
             total_gt = sum(len(gt) for gt in gt_per_file)
             console.print(f"  Ground truth events: {total_gt}")
 
+            # Diagnostic: show GT class distribution to detect mapping issues
+            from collections import Counter
+
+            gt_class_ids = Counter()
+            gt_unmapped = Counter()
+            for sound in test_sounds:
+                for event in sound["events"]:
+                    hierarchy = event.get("label_hierarchy", "")
+                    label = hierarchy.split(" + ")[-1] if hierarchy else "unknown"
+                    if label in label_to_class:
+                        gt_class_ids[label] += 1
+                    else:
+                        gt_unmapped[label] += 1
+
+            if gt_unmapped:
+                console.print(
+                    f"  [yellow]WARNING: {sum(gt_unmapped.values())} GT events with unmapped labels "
+                    f"(defaulting to class_id=0): {dict(gt_unmapped)}[/yellow]"
+                )
+            console.print(f"  GT class distribution: {dict(gt_class_ids)}")
+
             # Run inference to get raw detections
             console.print("  Running inference on test files...")
             raw_events_per_file = run_inference_on_test_files(
@@ -1660,6 +1816,27 @@ class OptimizeMergingStep(PipelineStep):
 
             total_raw = sum(len(e) for e in raw_events_per_file)
             console.print(f"  Raw detections: {total_raw}")
+
+            # Diagnostic: show prediction class distribution
+            pred_class_ids = Counter()
+            for event_list in raw_events_per_file:
+                for event in event_list:
+                    pred_class_ids[event.class_id] += 1
+            console.print(f"  Prediction class distribution: {dict(pred_class_ids)}")
+
+            # Check for class overlap between GT and predictions
+            gt_ids_set = set(e.class_id for gt in gt_per_file for e in gt)
+            pred_ids_set = set(e.class_id for el in raw_events_per_file for e in el)
+            overlap = gt_ids_set & pred_ids_set
+            if not overlap:
+                console.print(
+                    f"  [red]WARNING: No overlap between GT class IDs {gt_ids_set} "
+                    f"and prediction class IDs {pred_ids_set}. "
+                    f"Evaluation will produce F1=0![/red]"
+                )
+            elif overlap != gt_ids_set:
+                missing = gt_ids_set - pred_ids_set
+                console.print(f"  [yellow]WARNING: GT has classes {missing} with no predictions[/yellow]")
 
             # Set up search space
             default_search = SearchSpace(
@@ -2048,6 +2225,8 @@ class Pipeline:
         # Run steps with overall progress tracking
         start_time = datetime.now()
         success = True
+        # Track which steps actually executed (vs skipped from cache)
+        steps_executed: set[str] = set()
 
         # Display initial status
         console.print("\n")
@@ -2055,12 +2234,20 @@ class Pipeline:
         console.print("\n")
 
         for idx, (step_name, step_cls) in enumerate(steps_to_run):
-            step = step_cls(self.config, dry_run=dry_run)
+            # Force re-run if any upstream dependency actually executed
+            deps = step_dependencies.get(step_name, [])
+            force = any(d in steps_executed for d in deps)
+            step = step_cls(self.config, dry_run=dry_run, force=force)
             progress_manager.start_step(step_name)
 
             try:
                 step_success = step.run()
                 self.step_results[step_name] = step.results
+
+                # Track if this step actually ran (not skipped from cache)
+                if not step.results.get("skipped", False):
+                    steps_executed.add(step_name)
+
                 progress_manager.complete_step(step_name, success=step_success)
 
                 if not step_success:
