@@ -1328,6 +1328,33 @@ class DataDownloader:
             with open(output_path, "wb") as f:
                 f.write(audio_data)
 
+            # Save sidecar metadata JSON alongside the .wav file
+            # Event times must be relative to the clip (sound segment) start
+            sidecar_path = output_path.with_suffix(".json")
+            clip_start_s = sound.start_s
+            sidecar_events = []
+            for evt in events_meta:
+                relative_start_s = max(evt.get("start_s", 0) - clip_start_s, 0)
+                relative_end_s = evt.get("end_s", 0) - clip_start_s
+                sidecar_events.append(
+                    {
+                        "label_hierarchy": evt.get("label_hierarchy", ""),
+                        "hz_min": evt.get("hz_min", 0),
+                        "hz_max": evt.get("hz_max", 0),
+                        "time_start_ms": relative_start_s * 1000,
+                        "time_end_ms": relative_end_s * 1000,
+                        "confidence": evt.get("confidence"),
+                        "labeler": evt.get("labeler"),
+                    }
+                )
+            sidecar_data = {
+                "uuid": sound.sound_id,
+                "source_file": sound.source_file,
+                "events": sidecar_events,
+            }
+            with open(sidecar_path, "w") as f:
+                json.dump(sidecar_data, f, indent=2)
+
             result.success = True
             logger.debug(f"Downloaded: {output_filename} to {split}")
 

@@ -38,6 +38,27 @@ from rf_detr_finetuning.dataprocessor.preprocessing import (
 logger = logging.getLogger(__name__)
 
 
+def _extract_label(hierarchy: str) -> str:
+    """Extract the leaf label from a hierarchy string.
+
+    Supports ``" + "`` and ``" > "`` separators.
+
+    Args:
+        hierarchy: Hierarchy string, e.g. ``"biological > cetacean > odontoceti"``.
+
+    Returns:
+        Leaf label name, or the input string stripped of whitespace.
+
+    """
+    if not isinstance(hierarchy, str) or not hierarchy:
+        return ""
+    if " + " in hierarchy:
+        return hierarchy.split(" + ")[-1].strip()
+    if " > " in hierarchy:
+        return hierarchy.split(" > ")[-1].strip()
+    return hierarchy.strip()
+
+
 class AudioChunker:
     """Main class for chunking audio files into fixed-size spectrograms.
 
@@ -263,30 +284,39 @@ class AudioChunker:
 
             source_uuid = meta.get("uuid", source_uuid)
 
-            # Extract label from hierarchy or annotation
-            hierarchy = meta.get("label_hierarchy", "")
-            if isinstance(hierarchy, str) and hierarchy:
-                if " + " in hierarchy:
-                    label = hierarchy.split(" + ")[-1].strip()
-                elif " > " in hierarchy:
-                    label = hierarchy.split(" > ")[-1].strip()
-                else:
-                    label = hierarchy.strip()
+            # Support multi-event format (events array) or single-event flat format
+            meta_events = meta.get("events", [])
+            if meta_events:
+                for evt in meta_events:
+                    hierarchy = evt.get("label_hierarchy", "")
+                    label = _extract_label(hierarchy) if hierarchy else evt.get("category", "unknown")
+                    events.append(
+                        {
+                            "time_start_ms": evt.get("time_start_ms", 0),
+                            "time_end_ms": evt.get("time_end_ms", actual_duration_ms),
+                            "hz_min": evt.get("hz_min", self.fmin),
+                            "hz_max": evt.get("hz_max", fmax),
+                            "category": label or "unknown",
+                            "category_id": evt.get("category_id", 0),
+                            "is_file_level": evt.get("is_file_level", False),
+                        }
+                    )
             else:
-                label = meta.get("annotation", "unknown")
+                # Legacy flat format: single label at top level
+                hierarchy = meta.get("label_hierarchy", "")
+                label = _extract_label(hierarchy) if hierarchy else meta.get("annotation", "unknown")
 
-            # Create file-level bbox spanning entire audio
-            events.append(
-                {
-                    "time_start_ms": 0,
-                    "time_end_ms": actual_duration_ms,
-                    "hz_min": meta.get("hz_min", self.fmin),
-                    "hz_max": meta.get("hz_max", fmax),
-                    "category": label or "unknown",
-                    "category_id": 0,
-                    "is_file_level": True,
-                }
-            )
+                events.append(
+                    {
+                        "time_start_ms": 0,
+                        "time_end_ms": actual_duration_ms,
+                        "hz_min": meta.get("hz_min", self.fmin),
+                        "hz_max": meta.get("hz_max", fmax),
+                        "category": label or "unknown",
+                        "category_id": 0,
+                        "is_file_level": True,
+                    }
+                )
 
         return self.chunk_audio(audio, sample_rate, events, source_uuid)
 

@@ -20,8 +20,8 @@ class_names: []
 classes_file: null
 preprocess:
   enabled: false
-  audio_dir: /mnt/d/SoundBase/Sounds/SDK_test
-  metadata_dir: /mnt/d/SoundBase/Sounds/SDK_test
+  audio_dir: data/downloaded
+  metadata_dir: data/downloaded
   output_dir: data/processed
   chunking_config: config/chunking.yaml
   extensions:

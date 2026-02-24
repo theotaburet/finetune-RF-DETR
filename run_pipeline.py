@@ -748,19 +748,40 @@ class DownloadStep(PipelineStep):
             return False
 
     def _auto_discover_class_names(self, download_config: Any) -> None:
-        """Auto-discover class names from downloaded metadata if not already set.
+        """Auto-discover class names from the remote EKB API.
 
-        After download completes, scans the metadata file for distinct
-        label hierarchies and populates ``self.config.class_names`` with
-        the sorted leaf names.
+        Queries the API for all distinct label hierarchies and populates
+        ``self.config.class_names`` with the sorted leaf names. Falls back
+        to reading local download metadata if the API is unreachable.
 
         Args:
-            download_config: Download configuration with output paths.
+            download_config: Download configuration with API credentials
+                and output paths.
 
         """
         if self.config.class_names:
             return  # Already populated, don't override
 
+        from run_download_data import EKBAPIClient
+
+        # Primary: discover from remote API
+        try:
+            api_client = EKBAPIClient(
+                base_url=download_config.api.url,
+                token=download_config.api.token,
+            )
+            discovered = api_client.discover_class_names()
+            if discovered:
+                self.config.class_names = discovered
+                console.print(
+                    f"  [green]✓[/green] Discovered {len(discovered)} classes from API: {', '.join(discovered)}"
+                )
+                self.results["class_names"] = discovered
+                return
+        except Exception as e:
+            logger.warning(f"Could not discover class names from API: {e}")
+
+        # Fallback: discover from local metadata file
         from run_download_data import discover_class_names_from_metadata
 
         metadata_path = (
@@ -774,7 +795,9 @@ class DownloadStep(PipelineStep):
             discovered = discover_class_names_from_metadata(metadata_path)
             if discovered:
                 self.config.class_names = discovered
-                console.print(f"  [green]✓[/green] Discovered {len(discovered)} classes: {', '.join(discovered)}")
+                console.print(
+                    f"  [green]✓[/green] Discovered {len(discovered)} classes from metadata: {', '.join(discovered)}"
+                )
                 self.results["class_names"] = discovered
         except Exception as e:
             logger.warning(f"Could not auto-discover class names: {e}")
