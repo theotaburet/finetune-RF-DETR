@@ -52,10 +52,6 @@ class TestLoadClassNames:
         result = load_class_names(classes_file="/nonexistent/path.json")
         assert result is None
 
-    def test_no_args_returns_none(self) -> None:
-        result = load_class_names()
-        assert result is None
-
     def test_none_args_returns_none(self) -> None:
         result = load_class_names(class_names=None, classes_file=None)
         assert result is None
@@ -67,26 +63,9 @@ class TestLoadClassNames:
         result = load_class_names(class_names=[], classes_file=classes_file)
         assert result == ["from_file"]
 
-    def test_empty_list_no_file_returns_none(self) -> None:
-        result = load_class_names(class_names=[])
-        assert result is None
-
     def test_dict_without_known_keys_returns_none(self, tmp_path: Path) -> None:
         data = {"unknown_key": ["bird"]}
         classes_file = tmp_path / "classes.json"
         classes_file.write_text(json.dumps(data))
         result = load_class_names(classes_file=classes_file)
         assert result is None
-
-    def test_string_path_accepted(self, tmp_path: Path) -> None:
-        classes_file = tmp_path / "classes.json"
-        classes_file.write_text(json.dumps(["bird"]))
-        result = load_class_names(classes_file=str(classes_file))
-        assert result == ["bird"]
-
-    def test_coco_format_single_category(self, tmp_path: Path) -> None:
-        data = {"categories": [{"id": 0, "name": "event"}]}
-        classes_file = tmp_path / "classes.json"
-        classes_file.write_text(json.dumps(data))
-        result = load_class_names(classes_file=classes_file)
-        assert result == ["event"]

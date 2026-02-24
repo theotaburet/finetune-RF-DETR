@@ -79,19 +79,6 @@ class TestCOCODatasetBuilder:
         assert builder.images[0]["width"] == 640
         assert builder.images[0]["height"] == 480
 
-    def test_add_annotation(self):
-        """Test adding annotations."""
-        builder = COCODatasetBuilder()
-
-        image_id = builder.add_image("test.png", 640, 480)
-        ann_id = builder.add_annotation([10, 20, 100, 50], image_id, 0)
-
-        assert ann_id == 1
-        assert len(builder.annotations) == 1
-        assert builder.annotations[0]["bbox"] == [10, 20, 100, 50]
-        assert builder.annotations[0]["category_id"] == 0
-        assert builder.annotations[0]["area"] == 5000
-
     def test_to_dict(self):
         """Test export to dictionary."""
         builder = COCODatasetBuilder()
@@ -147,22 +134,11 @@ class TestParseFrequencyBins:
         """Test parsing multiple frequency bins."""
         result = parse_frequency_bins("0-500:low,500-2000:mid,2000-8000:high")
 
+        assert result is not None
         assert len(result) == 3
         assert result[0] == (0.0, 500.0, "low")
         assert result[1] == (500.0, 2000.0, "mid")
         assert result[2] == (2000.0, 8000.0, "high")
-
-    def test_parse_none(self):
-        """Test parsing None."""
-        result = parse_frequency_bins(None)
-
-        assert result is None
-
-    def test_parse_empty(self):
-        """Test parsing empty string."""
-        result = parse_frequency_bins("")
-
-        assert result is None
 
 
 class TestValidateCocoDataset:

@@ -442,7 +442,7 @@ class AudioInferencePipeline:
         logger.debug(f"Loaded audio: {duration_ms:.0f}ms @ {sr}Hz")
 
         # Process into chunks (no events needed for inference)
-        chunks = self.chunker.process_file(str(audio_path), events=[])
+        chunks = self.chunker.chunk_audio_file(audio_path)
 
         logger.debug(f"Generated {len(chunks)} chunks")
 
@@ -520,7 +520,7 @@ class AudioInferencePipeline:
         from rf_detr_finetuning.dataprocessor import grayscale_to_rgb, normalize_to_range
 
         # Load and chunk
-        chunks = self.chunker.process_file(str(audio_path), events=[])
+        chunks = self.chunker.chunk_audio_file(audio_path)
 
         results = []
         for chunk in chunks:

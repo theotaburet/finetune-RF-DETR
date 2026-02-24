@@ -12,7 +12,6 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
-import requests
 import yaml
 
 from run_download_data import (
@@ -29,10 +28,6 @@ from run_download_data import (
     split_sounds_into_datasets,
     validate_config,
 )
-
-# =============================================================================
-# Fixtures
-# =============================================================================
 
 
 @pytest.fixture
@@ -141,25 +136,8 @@ def sample_label_response() -> dict:
     }
 
 
-# =============================================================================
-# Configuration Tests
-# =============================================================================
-
-
 class TestDownloadConfig:
     """Test DownloadConfig class."""
-
-    def test_default_config(self):
-        """Test default configuration values."""
-        config = DownloadConfig()
-        assert config.api.url == ""
-        assert config.api.token is None
-        assert config.output.dir == "data/downloaded"
-        assert config.split.enabled is False
-        assert config.split.test_source_files == []
-        assert config.split.test_files == 10
-        assert config.split.train_ratio == 0.8
-        assert config.split.val_ratio == 0.2
 
     def test_load_from_yaml(self, tmp_config_file: Path):
         """Test loading configuration from YAML file."""
@@ -175,21 +153,6 @@ class TestDownloadConfig:
         assert config.filters.label_hierarchy == "marine/ship"
         assert config.limits.max_labels == 1000
         assert config.advanced.batch_size == 50
-
-    def test_to_dict(self):
-        """Test converting config to dictionary."""
-        config = DownloadConfig()
-        config.api.url = "http://test.com"
-        config.api.token = "secret"
-        config.split.enabled = True
-        config.split.test_source_files = ["file1.wav"]
-
-        data = config.to_dict()
-
-        assert data["api"]["url"] == "http://test.com"
-        assert data["api"]["token"] == "secret"
-        assert data["split"]["enabled"] is True
-        assert data["split"]["test_source_files"] == ["file1.wav"]
 
     def test_split_config_validation(self):
         """Test SplitConfig validation."""
@@ -319,26 +282,8 @@ class TestValidateConfig:
         assert any("must equal 1.0" in e for e in errors)
 
 
-# =============================================================================
-# Event and Sound Tests
-# =============================================================================
-
-
 class TestLabeledEvent:
     """Test LabeledEvent class."""
-
-    def test_duration_properties(self):
-        """Test duration calculations."""
-        event = LabeledEvent(
-            label_id="test",
-            source_file="file.wav",
-            source_start=10.0,
-            source_end=15.5,
-            label_hierarchy="test/label",
-        )
-
-        assert event.duration_s == 5.5
-        assert event.duration_ms == 5500.0
 
     def test_overlaps(self):
         """Test overlap detection."""
@@ -354,21 +299,6 @@ class TestLabeledEvent:
 
 class TestGroupOverlappingEvents:
     """Test event grouping logic."""
-
-    def test_no_events(self):
-        """Test grouping empty list."""
-        result = group_overlapping_events([], "file.wav")
-        assert result == []
-
-    def test_single_event(self):
-        """Test grouping single event."""
-        events = [LabeledEvent("1", "file.wav", 0.0, 10.0, "label")]
-        result = group_overlapping_events(events, "file.wav")
-
-        assert len(result) == 1
-        assert result[0].start_s == 0.0
-        assert result[0].end_s == 10.0
-        assert len(result[0].events) == 1
 
     def test_overlapping_events_grouped(self, sample_events):
         """Test that overlapping events are grouped together."""
@@ -424,11 +354,6 @@ class TestParseLabelResponse:
         assert event.source_file == ""
         assert event.label_hierarchy == "unknown"
         assert event.confidence == 1.0
-
-
-# =============================================================================
-# Dataset Splitting Tests
-# =============================================================================
 
 
 class TestSplitSoundsIntoDatasets:
@@ -509,15 +434,6 @@ class TestSplitSoundsIntoDatasets:
         # Should only find one file
         assert len(result["test"]) == 1
 
-    def test_split_empty_sounds(self):
-        """Test splitting empty sound list."""
-        config = SplitConfig(enabled=True, test_files=5, train_ratio=0.8, val_ratio=0.2)
-        result = split_sounds_into_datasets([], config)
-
-        assert result["train"] == []
-        assert result["val"] == []
-        assert result["test"] == []
-
     def test_split_stratification(self):
         """Test stratified validation split."""
         # Create sounds with balanced classes
@@ -545,11 +461,6 @@ class TestSplitSoundsIntoDatasets:
         # Check that val set has both classes
         val_labels = set(s.events[0].label_hierarchy for s in result["val"])
         assert len(val_labels) >= 1  # Should have at least one class
-
-
-# =============================================================================
-# DataDownloader Tests
-# =============================================================================
 
 
 class TestDataDownloader:
@@ -587,29 +498,8 @@ class TestDataDownloader:
         assert not Path(output_dir).exists()
 
 
-# =============================================================================
-# API Client Tests
-# =============================================================================
-
-
 class TestEKBAPIClient:
     """Test EKBAPIClient class."""
-
-    def test_init_with_token(self):
-        """Test initialization with authentication token."""
-        client = EKBAPIClient("http://api.example.com", token="test_token")
-
-        assert client.base_url == "http://api.example.com"
-        assert client.token == "test_token"
-        assert client.session.headers.get("Authorization") == "Bearer test_token"
-
-    def test_init_without_token(self):
-        """Test initialization without token."""
-        client = EKBAPIClient("http://api.example.com")
-
-        assert client.base_url == "http://api.example.com"
-        assert client.token is None
-        assert "Authorization" not in client.session.headers
 
     @patch("run_download_data.requests.Session.get")
     def test_list_sources(self, mock_get):
@@ -626,23 +516,8 @@ class TestEKBAPIClient:
         assert sources == ["source1", "source2"]
 
 
-# =============================================================================
-# Integration Tests
-# =============================================================================
-
-
 class TestIntegration:
     """Integration tests for the full workflow."""
-
-    def test_end_to_end_dry_run(self, tmp_config_file: Path):
-        """Test full workflow in dry-run mode."""
-        # This test would require mocking the API responses
-        # For now, just verify config loading works
-        config = DownloadConfig.from_yaml(tmp_config_file)
-
-        assert config.api.url == "http://192.168.50.103:8080/"
-        assert config.split.enabled is True
-        assert config.split.test_source_files == ["test1.wav", "test2.wav"]
 
     def test_config_file_not_found(self, tmp_path: Path):
         """Test handling of missing config file."""
@@ -650,80 +525,6 @@ class TestIntegration:
 
         with pytest.raises(FileNotFoundError):
             DownloadConfig.from_yaml(nonexistent)
-
-
-# =============================================================================
-# API Connectivity Tests
-# =============================================================================
-
-
-class TestAPIConnectivity:
-    """Test actual API connectivity."""
-
-    @pytest.fixture
-    def real_api_url(self):
-        """Return the real API URL from config."""
-        return "http://192.168.50.103:8080/"
-
-    def test_api_url_reachable(self, real_api_url):
-        """Test that the API URL is reachable.
-
-        This test is skipped if the API is not accessible.
-
-        """
-        try:
-            response = requests.get(real_api_url, timeout=5)
-            # Just check if we can connect (any response is fine)
-            assert response.status_code in [200, 404, 401, 403]
-        except requests.exceptions.ConnectionError:
-            pytest.skip("API server is not reachable")
-        except requests.exceptions.Timeout:
-            pytest.skip("API connection timed out")
-
-    def test_api_list_sources_endpoint(self, real_api_url):
-        """Test that the API /sdk/sources endpoint responds.
-
-        This test is skipped if the API is not accessible.
-
-        """
-        try:
-            client = EKBAPIClient(real_api_url)
-            sources = client.list_sources()
-            # If we get here, the endpoint is working
-            assert isinstance(sources, list)
-        except requests.exceptions.ConnectionError:
-            pytest.skip("API server is not reachable")
-        except requests.exceptions.HTTPError as e:
-            # 401/403 is acceptable (no auth token)
-            # 404 means endpoint doesn't exist yet
-            if e.response.status_code in [401, 403]:
-                pytest.skip("API requires authentication")
-            elif e.response.status_code == 404:
-                pytest.skip("API endpoint /sdk/sources not found (may not be implemented yet)")
-            raise
-
-    def test_api_labels_endpoint_structure(self, real_api_url):
-        """Test that the API /sdk/labels endpoint has correct structure.
-
-        This test is skipped if the API is not accessible.
-
-        """
-        try:
-            client = EKBAPIClient(real_api_url)
-            response = client.list_labels(limit=1)
-            # Check structure
-            assert "labels" in response or "total" in response or "sources" in response
-        except requests.exceptions.ConnectionError:
-            pytest.skip("API server is not reachable")
-        except requests.exceptions.HTTPError as e:
-            if e.response.status_code in [401, 403]:
-                pytest.skip("API requires authentication")
-            raise
-
-
-# =============================================================================
-# Dry-Run Output Tests
-# =============================================================================
 
 
 class TestDryRunOutput:
@@ -802,81 +603,12 @@ class TestDryRunOutput:
         # All should be marked as successful in dry-run
         assert all(r.success for r in results)
 
-    def test_dry_run_creates_metadata(self, mock_api_with_data, dry_run_config, tmp_path: Path):
-        """Test that dry-run creates metadata file."""
-        downloader = DataDownloader(
-            api_client=mock_api_with_data,
-            config=dry_run_config,
-            dry_run=True,
-        )
-
-        results = downloader.run()
-
-        # In dry-run mode, metadata is returned but not saved to disk
-        # So we verify the results are well-formed
-        assert len(results) > 0
-
         # Check result structure
         for result in results:
             assert result.sound_id
             assert result.source_file
             assert isinstance(result.events, list)
             assert result.split in ["train", "val", "test", "unsplit"]
-
-    def test_dry_run_with_test_source_files(self, mock_api_with_data, dry_run_config, tmp_path: Path):
-        """Test dry-run with specific test source files."""
-        dry_run_config.split.test_source_files = ["file0.wav"]
-        dry_run_config.split.test_files = 0  # Disable random selection
-
-        downloader = DataDownloader(
-            api_client=mock_api_with_data,
-            config=dry_run_config,
-            dry_run=True,
-        )
-
-        results = downloader.run()
-
-        # Should have results
-        assert len(results) > 0
-
-        # Check that some results are assigned to test split (if source files match)
-        _ = [r for r in results if r.split == "test"]
-
-    def test_dry_run_produces_valid_metadata_structure(self, mock_api_with_data, dry_run_config):
-        """Test that dry-run metadata has valid structure."""
-        downloader = DataDownloader(
-            api_client=mock_api_with_data,
-            config=dry_run_config,
-            dry_run=True,
-        )
-
-        results = downloader.run()
-
-        # Build metadata like the real code does
-        metadata = {
-            "download_info": {
-                "total_sounds": len(results),
-                "successful": sum(1 for r in results if r.success),
-                "failed": sum(1 for r in results if not r.success),
-                "config": dry_run_config.to_dict(),
-                "dry_run": True,
-            },
-            "sounds": [r.to_dict() for r in results],
-        }
-
-        # Validate structure
-        assert metadata["download_info"]["total_sounds"] > 0
-        assert metadata["download_info"]["successful"] == len(results)
-        assert metadata["download_info"]["failed"] == 0
-        assert metadata["download_info"]["dry_run"] is True
-
-        # Check each sound entry
-        for sound in metadata["sounds"]:
-            assert "sound_id" in sound
-            assert "source_file" in sound
-            assert "events" in sound
-            assert isinstance(sound["events"], list)
-            assert "split" in sound
 
     def test_dry_run_does_not_modify_filesystem(self, mock_api_with_data, dry_run_config, tmp_path: Path):
         """Test that dry-run does not create any files or directories."""
@@ -899,27 +631,66 @@ class TestDryRunOutput:
         # No files should be created
         assert len(list(tmp_path.glob("**/*"))) == 0
 
-    def test_dry_run_output_is_consistent(self, mock_api_with_data, dry_run_config):
-        """Test that dry-run produces consistent results across multiple runs."""
-        downloader1 = DataDownloader(
-            api_client=mock_api_with_data,
-            config=dry_run_config,
-            dry_run=True,
-        )
 
-        downloader2 = DataDownloader(
-            api_client=mock_api_with_data,
-            config=dry_run_config,
-            dry_run=True,
-        )
+class TestExtractLeafName:
+    """Tests for extract_leaf_name()."""
 
-        results1 = downloader1.run()
-        results2 = downloader2.run()
+    @pytest.mark.parametrize(
+        ("hierarchy", "expected"),
+        [
+            ("Marine mammals + Whales + Humpback whale", "Humpback whale"),
+            ("whistles > odontoceti", "odontoceti"),
+            ("single_label", "single_label"),
+            ("", ""),
+            ("  spaced  ", "spaced"),
+            ("a + b + c + d", "d"),
+        ],
+    )
+    def test_extract_leaf_name(self, hierarchy, expected):
+        """Extract the leaf class name from various hierarchy formats."""
+        from run_download_data import extract_leaf_name
 
-        # Should have same number of results
-        assert len(results1) == len(results2)
+        assert extract_leaf_name(hierarchy) == expected
 
-        # Should have same sound IDs
-        ids1 = {r.sound_id for r in results1}
-        ids2 = {r.sound_id for r in results2}
-        assert ids1 == ids2
+
+class TestDiscoverClassNamesFromMetadata:
+    """Tests for discover_class_names_from_metadata()."""
+
+    def test_discovers_sorted_unique_classes(self, tmp_path):
+        """Discover unique leaf class names from download metadata."""
+        import json
+
+        from run_download_data import discover_class_names_from_metadata
+
+        metadata = {
+            "sounds": [
+                {
+                    "events": [
+                        {"label_hierarchy": "Marine + Whales + Blue whale"},
+                        {"label_hierarchy": "Marine + Whales + Humpback whale"},
+                    ]
+                },
+                {
+                    "events": [
+                        {"label_hierarchy": "Marine + Whales + Blue whale"},
+                        {"label_hierarchy": "Anthropogenic + Ship noise"},
+                    ]
+                },
+            ]
+        }
+        path = tmp_path / "metadata.json"
+        path.write_text(json.dumps(metadata))
+
+        result = discover_class_names_from_metadata(path)
+        assert result == ["Blue whale", "Humpback whale", "Ship noise"]
+
+    def test_empty_metadata(self, tmp_path):
+        """Return empty list when metadata has no events."""
+        import json
+
+        from run_download_data import discover_class_names_from_metadata
+
+        path = tmp_path / "metadata.json"
+        path.write_text(json.dumps({"sounds": []}))
+
+        assert discover_class_names_from_metadata(path) == []

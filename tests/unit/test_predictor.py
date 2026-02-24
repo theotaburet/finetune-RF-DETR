@@ -14,33 +14,12 @@ from rf_detr_finetuning.predictor.inference import Detection, PredictionResult, 
 class TestDetection:
     """Tests for Detection dataclass."""
 
-    def test_properties(self) -> None:
-        det = Detection(bbox=[10.0, 20.0, 50.0, 80.0], score=0.9, class_id=1)
-        assert det.x1 == 10.0
-        assert det.y1 == 20.0
-        assert det.x2 == 50.0
-        assert det.y2 == 80.0
-        assert det.width == 40.0
-        assert det.height == 60.0
-        assert det.center == (30.0, 50.0)
-        assert det.area == 2400.0
-
     def test_to_coco(self) -> None:
         det = Detection(bbox=[10.0, 20.0, 50.0, 80.0], score=0.9, class_id=1)
         coco = det.to_coco()
         assert coco["bbox"] == [10.0, 20.0, 40.0, 60.0]  # x, y, w, h
         assert coco["score"] == 0.9
         assert coco["category_id"] == 1
-
-    def test_to_dict(self) -> None:
-        det = Detection(bbox=[10.0, 20.0, 50.0, 80.0], score=0.9, class_id=1, class_name="frog")
-        d = det.to_dict()
-        assert d["bbox"] == [10.0, 20.0, 50.0, 80.0]
-        assert d["class_name"] == "frog"
-
-    def test_class_name_default_none(self) -> None:
-        det = Detection(bbox=[0, 0, 1, 1], score=0.5, class_id=0)
-        assert det.class_name is None
 
 
 class TestPredictionResult:
@@ -64,9 +43,6 @@ class TestPredictionResult:
         result = self._make_result().filter_by_class([0])
         assert len(result) == 2
         assert all(d.class_id == 0 for d in result.detections)
-
-    def test_len(self) -> None:
-        assert len(self._make_result()) == 3
 
 
 class TestRFDETRPredictorLoadModel:

@@ -796,6 +796,77 @@ class EKBAPIClient:
                     console.print(f"  [dim]Fetched {offset}/{total} labels[/dim]")
                     last_reported = progress_pct
 
+    def discover_class_names(self, **filters: Any) -> list[str]:
+        """Discover distinct class names from the API by scanning label hierarchies.
+
+        Fetches all labels (applying any provided filters), extracts the leaf name
+        from each ``label_hierarchy`` field, and returns a sorted deduplicated list.
+
+        Args:
+            **filters: Filters forwarded to :meth:`fetch_all_labels`
+                (e.g. ``sources=["src1"]``, ``label_hierarchy="marine"``).
+
+        Returns:
+            Sorted list of unique leaf class names.
+
+        """
+        class_names: set[str] = set()
+        for label in self.fetch_all_labels(quiet=True, **filters):
+            hierarchy = label.get("label_hierarchy", "")
+            leaf = extract_leaf_name(hierarchy)
+            if leaf:
+                class_names.add(leaf)
+        return sorted(class_names)
+
+
+def extract_leaf_name(hierarchy: str) -> str:
+    """Extract the leaf (most-specific) name from a label hierarchy string.
+
+    Supports both ``" + "`` and ``" > "`` separators. Returns the last
+    segment, stripped of whitespace.
+
+    Args:
+        hierarchy: Hierarchy string, e.g. ``"Marine mammals + Whales + Humpback whale"``.
+
+    Returns:
+        Leaf name (e.g. ``"Humpback whale"``), or the original string stripped
+        if no separator is found. Returns empty string for blank input.
+
+    """
+    if not hierarchy or not isinstance(hierarchy, str):
+        return ""
+    if " + " in hierarchy:
+        return hierarchy.split(" + ")[-1].strip()
+    if " > " in hierarchy:
+        return hierarchy.split(" > ")[-1].strip()
+    return hierarchy.strip()
+
+
+def discover_class_names_from_metadata(metadata_path: Path) -> list[str]:
+    """Discover class names from a previously-downloaded metadata JSON file.
+
+    Scans the ``sounds`` entries for event ``label_hierarchy`` fields and
+    extracts unique leaf names.
+
+    Args:
+        metadata_path: Path to ``download_metadata.json``.
+
+    Returns:
+        Sorted list of unique leaf class names.
+
+    """
+    with open(metadata_path) as f:
+        metadata = json.load(f)
+
+    class_names: set[str] = set()
+    for sound in metadata.get("sounds", []):
+        for event in sound.get("events", []):
+            hierarchy = event.get("label_hierarchy", "")
+            leaf = extract_leaf_name(hierarchy)
+            if leaf:
+                class_names.add(leaf)
+    return sorted(class_names)
+
 
 # =============================================================================
 # Event Grouping Logic

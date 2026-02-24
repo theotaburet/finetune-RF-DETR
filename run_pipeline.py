@@ -6,7 +6,8 @@ Complete pipeline with toggleable steps:
   2. Split: Split dataset into train/val/test
   3. Train: Fine-tune RF-DETR on spectrograms
   4. Evaluate: Run inference on test set
-  5. Infer: Run inference on new audio files
+  5. Optimize merging: Grid-search merge parameters on test audio
+  6. Infer: Run inference on new audio files
 
 Usage:
     # Run full pipeline
@@ -17,6 +18,9 @@ Usage:
 
     # Evaluate existing model
     python run_pipeline.py --config config/pipeline.yaml --evaluate
+
+    # Optimize merge parameters after training
+    python run_pipeline.py --config config/pipeline.yaml --optimize-merging
 
     # Generate config template
     python run_pipeline.py --generate-config config/my_pipeline.yaml
@@ -141,6 +145,27 @@ class EvaluateConfig:
 
 
 @dataclass
+class OptimizeMergingConfig:
+    """Merge parameter optimization step configuration."""
+
+    enabled: bool = False
+    weights: str = "output/checkpoint_best.pth"
+    metadata: str = "data/downloaded/metadata/download_metadata.json"
+    audio_dir: str | None = None
+    chunking_config: str = "config/chunking.yaml"
+    output: str = "config/merging.yaml"
+    results_json: str | None = None
+    confidence: float = 0.3
+    iou_threshold: float = 0.3
+    per_class: bool = False
+    max_files: int | None = None
+    delta_time_values: list[float] = field(default_factory=lambda: [200, 500, 1000, 2000, 4000, 8000])
+    delta_freq_values: list[float] = field(default_factory=lambda: [50, 100, 200, 500])
+    score_threshold_values: list[float] = field(default_factory=lambda: [0.1, 0.2, 0.3, 0.5])
+    min_duration_values: list[float] = field(default_factory=lambda: [0, 100, 200])
+
+
+@dataclass
 class InferConfig:
     """Inference step configuration."""
 
@@ -191,6 +216,7 @@ class PipelineConfig:
     split: SplitConfig = field(default_factory=SplitConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
     evaluate: EvaluateConfig = field(default_factory=EvaluateConfig)
+    optimize_merging: OptimizeMergingConfig = field(default_factory=OptimizeMergingConfig)
     infer: InferConfig = field(default_factory=InferConfig)
 
     @classmethod
@@ -218,6 +244,8 @@ class PipelineConfig:
             config.train = TrainConfig(**data["train"])
         if "evaluate" in data:
             config.evaluate = EvaluateConfig(**data["evaluate"])
+        if "optimize_merging" in data:
+            config.optimize_merging = OptimizeMergingConfig(**data["optimize_merging"])
         if "infer" in data:
             config.infer = InferConfig(**data["infer"])
 
@@ -285,6 +313,23 @@ class PipelineConfig:
                 "confidence_threshold": self.evaluate.confidence_threshold,
                 "iou_threshold": self.evaluate.iou_threshold,
                 "save_visualizations": self.evaluate.save_visualizations,
+            },
+            "optimize_merging": {
+                "enabled": self.optimize_merging.enabled,
+                "weights": self.optimize_merging.weights,
+                "metadata": self.optimize_merging.metadata,
+                "audio_dir": self.optimize_merging.audio_dir,
+                "chunking_config": self.optimize_merging.chunking_config,
+                "output": self.optimize_merging.output,
+                "results_json": self.optimize_merging.results_json,
+                "confidence": self.optimize_merging.confidence,
+                "iou_threshold": self.optimize_merging.iou_threshold,
+                "per_class": self.optimize_merging.per_class,
+                "max_files": self.optimize_merging.max_files,
+                "delta_time_values": self.optimize_merging.delta_time_values,
+                "delta_freq_values": self.optimize_merging.delta_freq_values,
+                "score_threshold_values": self.optimize_merging.score_threshold_values,
+                "min_duration_values": self.optimize_merging.min_duration_values,
             },
             "infer": {
                 "enabled": self.infer.enabled,
@@ -644,6 +689,8 @@ class DownloadStep(PipelineStep):
                     "reason": change_info["reason"],
                     "cached_count": change_info["cached_count"],
                 }
+                # Still discover class names from cached metadata
+                self._auto_discover_class_names(download_config)
                 return True
         else:
             console.print("  [yellow]Force mode enabled, skipping change detection[/yellow]")
@@ -687,6 +734,10 @@ class DownloadStep(PipelineStep):
                 console.print(f"  [yellow]![/yellow] {failed} downloads failed")
 
             console.print(f"  [green]✓[/green] Downloaded {successful} sounds")
+
+            # Auto-discover class names if not already set
+            self._auto_discover_class_names(download_config)
+
             return failed == 0
 
         except Exception as e:
@@ -695,6 +746,38 @@ class DownloadStep(PipelineStep):
 
             traceback.print_exc()
             return False
+
+    def _auto_discover_class_names(self, download_config: Any) -> None:
+        """Auto-discover class names from downloaded metadata if not already set.
+
+        After download completes, scans the metadata file for distinct
+        label hierarchies and populates ``self.config.class_names`` with
+        the sorted leaf names.
+
+        Args:
+            download_config: Download configuration with output paths.
+
+        """
+        if self.config.class_names:
+            return  # Already populated, don't override
+
+        from run_download_data import discover_class_names_from_metadata
+
+        metadata_path = (
+            Path(download_config.output.dir) / download_config.output.metadata_dir / "download_metadata.json"
+        )
+
+        if not metadata_path.exists():
+            return
+
+        try:
+            discovered = discover_class_names_from_metadata(metadata_path)
+            if discovered:
+                self.config.class_names = discovered
+                console.print(f"  [green]✓[/green] Discovered {len(discovered)} classes: {', '.join(discovered)}")
+                self.results["class_names"] = discovered
+        except Exception as e:
+            logger.warning(f"Could not auto-discover class names: {e}")
 
     def dry_run_report(self) -> dict[str, Any]:
         """Report download plan."""
@@ -1421,6 +1504,245 @@ class EvaluateStep(PipelineStep):
             return False
 
 
+class OptimizeMergingStep(PipelineStep):
+    """Optimize merge parameters via grid search on test audio files."""
+
+    name = "optimize_merging"
+
+    def validate(self) -> list[str]:
+        """Validate optimization configuration.
+
+        Returns:
+            List of validation error messages.
+
+        """
+        errors = []
+        cfg = self.config.optimize_merging
+
+        if not Path(cfg.weights).exists():
+            errors.append(f"Model weights not found: {cfg.weights}")
+        if not Path(cfg.metadata).exists():
+            errors.append(f"Download metadata not found: {cfg.metadata}")
+        if not Path(cfg.chunking_config).exists():
+            errors.append(f"Chunking config not found: {cfg.chunking_config}")
+
+        return errors
+
+    def run(self) -> bool:
+        """Execute the merge parameter optimization step.
+
+        Returns:
+            True if successful, False otherwise.
+
+        """
+        cfg = self.config.optimize_merging
+        console.print("\n[bold cyan]Step: Optimize Merging[/bold cyan]")
+        console.print(f"  Metadata: {cfg.metadata}")
+        console.print(f"  Weights: {cfg.weights}")
+        console.print(f"  Output: {cfg.output}")
+        console.print(f"  Mode: {'per-class' if cfg.per_class else 'default-only'}")
+
+        if self.dry_run:
+            n_test = 0
+            metadata_path = Path(cfg.metadata)
+            if metadata_path.exists():
+                with open(metadata_path) as f:
+                    metadata = json.load(f)
+                n_test = sum(
+                    1 for s in metadata.get("sounds", []) if s.get("split") == "test" and s.get("success", False)
+                )
+            n_combos = (
+                len(cfg.delta_time_values)
+                * len(cfg.delta_freq_values)
+                * len(cfg.score_threshold_values)
+                * len(cfg.min_duration_values)
+            )
+            self.results = {
+                "test_files": n_test,
+                "search_combinations": n_combos,
+                "mode": "per-class" if cfg.per_class else "default-only",
+            }
+            console.print("  [yellow]DRY RUN[/yellow] - would optimize:")
+            console.print(f"    {n_test} test files, {n_combos} parameter combinations")
+            return True
+
+        try:
+            from rf_detr_finetuning.eventprocessor.optimizer import (
+                GlobalSearchSpace,
+                SearchSpace,
+                optimize_default_only,
+                optimize_per_class,
+                save_config_yaml,
+            )
+            from rf_detr_finetuning.utils import load_class_names
+            from run_optimize_merging import (
+                build_class_mapping,
+                display_config_table,
+                display_eval_table,
+                events_to_audio_events,
+                load_test_data,
+                run_inference_on_test_files,
+            )
+
+            # Load test data
+            metadata_path = Path(cfg.metadata)
+            audio_dir = Path(cfg.audio_dir) if cfg.audio_dir else None
+            test_sounds = load_test_data(metadata_path, audio_dir)
+
+            if not test_sounds:
+                console.print("  [red]No test audio files found in metadata[/red]")
+                return False
+
+            if cfg.max_files:
+                test_sounds = test_sounds[: cfg.max_files]
+
+            console.print(f"  Found {len(test_sounds)} test audio files")
+
+            # Resolve class names
+            class_names = load_class_names(
+                self.config.class_names or None,
+                self.config.classes_file,
+            )
+
+            # Try to load from checkpoint
+            try:
+                import torch
+
+                checkpoint = torch.load(Path(cfg.weights), map_location="cpu", weights_only=False)
+                if hasattr(checkpoint.get("args", object()), "class_names"):
+                    class_names = checkpoint["args"].class_names
+            except Exception:
+                pass
+
+            label_to_class = build_class_mapping(test_sounds, class_names)
+            class_names_dict = {v: k for k, v in label_to_class.items()}
+            console.print(f"  Classes: {list(label_to_class.keys())}")
+
+            # Build ground truth
+            gt_per_file = [events_to_audio_events(sound["events"], label_to_class) for sound in test_sounds]
+            total_gt = sum(len(gt) for gt in gt_per_file)
+            console.print(f"  Ground truth events: {total_gt}")
+
+            # Run inference to get raw detections
+            console.print("  Running inference on test files...")
+            raw_events_per_file = run_inference_on_test_files(
+                test_sounds,
+                weights_path=Path(cfg.weights),
+                chunking_config_path=Path(cfg.chunking_config),
+                model_size=self.config.train.model_size,
+                device=self.config.train.device,
+                class_names=class_names,
+                confidence=cfg.confidence,
+            )
+
+            total_raw = sum(len(e) for e in raw_events_per_file)
+            console.print(f"  Raw detections: {total_raw}")
+
+            # Set up search space
+            default_search = SearchSpace(
+                delta_time_ms=cfg.delta_time_values,
+                delta_freq_hz=cfg.delta_freq_values,
+                score_strategy=["max"],
+            )
+            global_search = GlobalSearchSpace(
+                score_threshold=cfg.score_threshold_values,
+                min_duration_ms=cfg.min_duration_values,
+            )
+
+            total_combos = default_search.num_combinations * global_search.num_combinations
+            console.print(f"  Searching {total_combos} parameter combinations...")
+
+            # Run optimization
+            with create_file_progress() as progress:
+                if cfg.per_class:
+                    class_ids = sorted(label_to_class.values())
+                    per_class_combos = default_search.num_combinations * len(class_ids)
+                    total_with_per_class = total_combos + per_class_combos
+                    task = progress.add_task("Optimizing...", total=total_with_per_class)
+
+                    def progress_cb(phase: str, current: int, total: int) -> None:
+                        if phase == "defaults":
+                            progress.update(
+                                task,
+                                completed=current,
+                                description=f"Phase 1: defaults ({current}/{total})",
+                            )
+                        else:
+                            base = total_combos
+                            progress.update(
+                                task,
+                                completed=base + current,
+                                description=f"Phase 2: {phase} ({current}/{total})",
+                            )
+
+                    result = optimize_per_class(
+                        raw_events_per_file,
+                        gt_per_file,
+                        class_ids=class_ids,
+                        default_search=default_search,
+                        global_search=global_search,
+                        iou_threshold=cfg.iou_threshold,
+                        class_names=class_names_dict,
+                        progress_callback=progress_cb,
+                    )
+                else:
+                    task = progress.add_task("Optimizing...", total=total_combos)
+
+                    def progress_cb_default(current: int, total: int) -> None:
+                        progress.update(
+                            task,
+                            completed=current,
+                            description=f"Searching ({current}/{total})",
+                        )
+
+                    result = optimize_default_only(
+                        raw_events_per_file,
+                        gt_per_file,
+                        default_search=default_search,
+                        global_search=global_search,
+                        iou_threshold=cfg.iou_threshold,
+                        class_names=class_names_dict,
+                        progress_callback=progress_cb_default,
+                    )
+
+            if not result.best_config or not result.best_eval:
+                console.print("  [red]Optimization failed: no valid configuration found[/red]")
+                return False
+
+            # Display results
+            console.print(f"  [green]Best F1: {result.best_f1:.4f}[/green] ({result.trials_evaluated} trials)")
+            display_config_table(result.best_config, class_names_dict)
+            display_eval_table(result.best_eval, "Optimization Results")
+
+            # Save config
+            save_config_yaml(result.best_config, cfg.output, class_names_dict)
+            console.print(f"  [green]Optimized config saved to:[/green] {cfg.output}")
+
+            # Save detailed results JSON
+            if cfg.results_json:
+                results_path = Path(cfg.results_json)
+                results_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(results_path, "w") as f:
+                    json.dump(result.to_dict(), f, indent=2)
+
+            self.results = {
+                "best_f1": round(result.best_f1, 4),
+                "trials": result.trials_evaluated,
+                "test_files": len(test_sounds),
+                "raw_detections": total_raw,
+                "gt_events": total_gt,
+            }
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Merge optimization failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+
 class InferStep(PipelineStep):
     """Inference step on new audio files."""
 
@@ -1569,6 +1891,7 @@ class Pipeline:
         ("split", SplitStep),
         ("train", TrainStep),
         ("evaluate", EvaluateStep),
+        ("optimize_merging", OptimizeMergingStep),
         ("infer", InferStep),
     ]
 
@@ -1589,6 +1912,7 @@ class Pipeline:
         split: bool | None = None,
         train: bool | None = None,
         evaluate: bool | None = None,
+        optimize_merging: bool | None = None,
         infer: bool | None = None,
         run_all: bool = False,
         dry_run: bool = False,
@@ -1601,6 +1925,7 @@ class Pipeline:
             split: Override split step enabled.
             train: Override train step enabled.
             evaluate: Override evaluate step enabled.
+            optimize_merging: Override merge optimization step enabled.
             infer: Override infer step enabled.
             run_all: Run all steps (overrides config).
             dry_run: If True, validate and report without executing.
@@ -1618,6 +1943,7 @@ class Pipeline:
             "split": split,
             "train": train,
             "evaluate": evaluate,
+            "optimize_merging": optimize_merging,
             "infer": infer,
         }
 
@@ -1662,6 +1988,7 @@ class Pipeline:
             "split": ["preprocess"],  # split needs preprocess output
             "train": ["split"],  # train needs split output
             "evaluate": ["train"],  # evaluate needs trained model
+            "optimize_merging": ["train"],  # optimize needs trained model + test data
             "infer": ["train"],  # infer needs trained model
         }
 
@@ -1832,6 +2159,11 @@ def parse_args() -> argparse.Namespace:
         help="Run evaluation step",
     )
     step_group.add_argument(
+        "--optimize-merging",
+        action="store_true",
+        help="Run merge parameter optimization step",
+    )
+    step_group.add_argument(
         "--infer",
         action="store_true",
         help="Run inference step",
@@ -1858,6 +2190,11 @@ def parse_args() -> argparse.Namespace:
         "--no-train",
         action="store_true",
         help="Skip training step",
+    )
+    skip_group.add_argument(
+        "--no-optimize-merging",
+        action="store_true",
+        help="Skip merge optimization step",
     )
 
     # Other options
@@ -1906,13 +2243,22 @@ def main() -> int:
     # Determine step overrides
     # If specific steps are requested, use those
     # If --no-X is specified, disable that step
-    any_step_requested = args.download or args.preprocess or args.split or args.train or args.evaluate or args.infer
+    any_step_requested = (
+        args.download
+        or args.preprocess
+        or args.split
+        or args.train
+        or args.evaluate
+        or args.optimize_merging
+        or args.infer
+    )
 
     download = None
     preprocess = None
     split = None
     train = None
     evaluate = None
+    optimize_merging = None
     infer = None
 
     if any_step_requested:
@@ -1921,6 +2267,7 @@ def main() -> int:
         split = args.split
         train = args.train
         evaluate = args.evaluate
+        optimize_merging = args.optimize_merging
         infer = args.infer
     else:
         # Use config defaults, but apply --no-X overrides
@@ -1932,6 +2279,8 @@ def main() -> int:
             split = False
         if args.no_train:
             train = False
+        if args.no_optimize_merging:
+            optimize_merging = False
 
     # Run pipeline
     pipeline = Pipeline(config)
@@ -1941,6 +2290,7 @@ def main() -> int:
         split=split,
         train=train,
         evaluate=evaluate,
+        optimize_merging=optimize_merging,
         infer=infer,
         run_all=args.all,
         dry_run=args.dry_run,

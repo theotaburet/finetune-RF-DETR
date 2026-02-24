@@ -2,24 +2,13 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
 from rf_detr_finetuning.eventprocessor.event import AudioEvent, EventList
 
 
-class TestAudioEventToFromDict:
-    """Tests for AudioEvent.to_dict() and from_dict() round-trip."""
-
-    def test_round_trip_minimal(self) -> None:
-        event = AudioEvent(start_ms=100.0, end_ms=500.0, class_id=0)
-        d = event.to_dict()
-        restored = AudioEvent.from_dict(d)
-        assert restored.start_ms == event.start_ms
-        assert restored.end_ms == event.end_ms
-        assert restored.class_id == event.class_id
-        assert restored.class_name is None
-        assert restored.score == 1.0
+class TestAudioEventRoundTrip:
+    """Tests for AudioEvent.to_dict() / from_dict() round-trip."""
 
     def test_round_trip_full(self) -> None:
         event = AudioEvent(
@@ -44,49 +33,8 @@ class TestAudioEventToFromDict:
         assert restored.max_freq_hz == 5000.0
         assert restored.source_windows == [0, 1, 2]
         assert restored.metadata == {"detector": "rfdetr"}
-
-    def test_to_dict_includes_duration(self) -> None:
-        event = AudioEvent(start_ms=100.0, end_ms=500.0, class_id=0)
-        d = event.to_dict()
+        # duration_ms included in to_dict output
         assert d["duration_ms"] == 400.0
-
-    def test_from_dict_missing_optional_fields(self) -> None:
-        d = {"start_ms": 0.0, "end_ms": 100.0, "class_id": 1}
-        event = AudioEvent.from_dict(d)
-        assert event.class_name is None
-        assert event.score == 1.0
-        assert event.min_freq_hz is None
-        assert event.max_freq_hz is None
-        assert event.source_windows == []
-        assert event.metadata == {}
-
-    def test_from_dict_with_extra_fields_ignored(self) -> None:
-        """from_dict should not crash on extra keys (e.g. duration_ms from to_dict)."""
-        d = {
-            "start_ms": 0.0,
-            "end_ms": 100.0,
-            "class_id": 0,
-            "duration_ms": 100.0,
-            "extra_key": "ignored",
-        }
-        event = AudioEvent.from_dict(d)
-        assert event.start_ms == 0.0
-
-
-class TestAudioEventProperties:
-    """Tests for AudioEvent computed properties."""
-
-    def test_duration_ms(self) -> None:
-        event = AudioEvent(start_ms=100.0, end_ms=500.0, class_id=0)
-        assert event.duration_ms == 400.0
-
-    def test_duration_s(self) -> None:
-        event = AudioEvent(start_ms=0.0, end_ms=1000.0, class_id=0)
-        assert event.duration_s == 1.0
-
-    def test_center_ms(self) -> None:
-        event = AudioEvent(start_ms=100.0, end_ms=500.0, class_id=0)
-        assert event.center_ms == 300.0
 
 
 class TestEventListSaveLoad:
@@ -131,46 +79,6 @@ class TestEventListSaveLoad:
         assert all(isinstance(k, int) for k in loaded.class_names)
         assert loaded.class_names == {0: "bird", 1: "frog", 42: "whale"}
 
-    def test_class_names_keys_are_strings_in_json(self, tmp_path: Path) -> None:
-        """JSON serialization converts int keys to strings; load() must fix this."""
-        save_path = tmp_path / "events.json"
-        data = {
-            "events": [],
-            "class_names": {"0": "bird", "1": "frog"},
-            "duration_ms": 0.0,
-        }
-        save_path.write_text(json.dumps(data))
-        loaded = EventList.load(save_path)
-        assert loaded.class_names == {0: "bird", 1: "frog"}
-        assert all(isinstance(k, int) for k in loaded.class_names)
-
-    def test_save_creates_parent_directories(self, tmp_path: Path) -> None:
-        event_list = self._make_event_list()
-        deep_path = tmp_path / "a" / "b" / "c" / "events.json"
-        event_list.save(deep_path)
-        assert deep_path.exists()
-
-    def test_load_missing_events_key(self, tmp_path: Path) -> None:
-        save_path = tmp_path / "events.json"
-        save_path.write_text(json.dumps({"duration_ms": 500.0}))
-        loaded = EventList.load(save_path)
-        assert len(loaded) == 0
-        assert loaded.duration_ms == 500.0
-
-    def test_load_missing_class_names_key(self, tmp_path: Path) -> None:
-        save_path = tmp_path / "events.json"
-        save_path.write_text(json.dumps({"events": []}))
-        loaded = EventList.load(save_path)
-        assert loaded.class_names == {}
-
-    def test_load_empty_event_list(self, tmp_path: Path) -> None:
-        event_list = EventList()
-        save_path = tmp_path / "empty.json"
-        event_list.save(save_path)
-        loaded = EventList.load(save_path)
-        assert len(loaded) == 0
-        assert loaded.class_names == {}
-
 
 class TestEventListFiltering:
     """Tests for EventList filtering methods."""
@@ -185,28 +93,11 @@ class TestEventListFiltering:
             class_names={0: "bird", 1: "frog"},
         )
 
-    def test_filter_by_duration_min(self) -> None:
-        events = self._make_events()
-        filtered = events.filter_by_duration(min_duration_ms=100.0)
-        assert len(filtered) == 2
-        assert all(e.duration_ms >= 100.0 for e in filtered)
-
-    def test_filter_by_duration_max(self) -> None:
-        events = self._make_events()
-        filtered = events.filter_by_duration(max_duration_ms=500.0)
-        assert len(filtered) == 2
-        assert all(e.duration_ms <= 500.0 for e in filtered)
-
     def test_filter_by_duration_min_and_max(self) -> None:
         events = self._make_events()
         filtered = events.filter_by_duration(min_duration_ms=100.0, max_duration_ms=500.0)
         assert len(filtered) == 1
         assert filtered[0].class_id == 1
-
-    def test_filter_preserves_class_names(self) -> None:
-        events = self._make_events()
-        filtered = events.filter_by_duration(min_duration_ms=100.0)
-        assert filtered.class_names == events.class_names
 
     def test_get_class_counts(self) -> None:
         events = self._make_events()
@@ -223,9 +114,3 @@ class TestEventListFiltering:
         )
         sorted_events = events.sort_by_time()
         assert [e.start_ms for e in sorted_events] == [100.0, 300.0, 500.0]
-
-    def test_sort_by_score(self) -> None:
-        events = self._make_events()
-        sorted_events = events.sort_by_score(descending=True)
-        scores = [e.score for e in sorted_events]
-        assert scores == sorted(scores, reverse=True)

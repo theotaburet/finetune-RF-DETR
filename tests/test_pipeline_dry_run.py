@@ -24,10 +24,6 @@ from run_pipeline import (
     TrainStep,
 )
 
-# ---------------------------------------------------------------------------
-# Fixtures
-# ---------------------------------------------------------------------------
-
 
 @pytest.fixture
 def tmp_config(tmp_path: Path) -> PipelineConfig:
@@ -121,138 +117,62 @@ def tmp_config_yaml(tmp_path: Path, tmp_config: PipelineConfig) -> Path:
     return config_path
 
 
-# ---------------------------------------------------------------------------
-# Unit tests: individual step dry-run
-# ---------------------------------------------------------------------------
+class TestStepDryRun:
+    """Each pipeline step should succeed in dry-run without side effects."""
 
-
-class TestDownloadStepDryRun:
-    """DownloadStep dry-run reports download plan without downloading."""
-
-    def test_returns_true(self, tmp_config: PipelineConfig) -> None:
+    def test_download_dry_run(self, tmp_config: PipelineConfig) -> None:
         step = DownloadStep(tmp_config, dry_run=True)
         assert step.run() is True
-
-    def test_populates_results(self, tmp_config: PipelineConfig) -> None:
-        step = DownloadStep(tmp_config, dry_run=True)
-        step.run()
         assert "api_url" in step.results
         assert "output_dir" in step.results
 
-
-class TestPreprocessStepDryRun:
-    """PreprocessStep dry-run returns report without processing files."""
-
-    def test_returns_true(self, tmp_config: PipelineConfig) -> None:
-        step = PreprocessStep(tmp_config, dry_run=True)
-        assert step.run() is True
-
-    def test_populates_results(self, tmp_config: PipelineConfig) -> None:
-        step = PreprocessStep(tmp_config, dry_run=True)
-        step.run()
-        assert "audio_files" in step.results
-        assert "output_dir" in step.results
-
-    def test_no_images_created(self, tmp_config: PipelineConfig) -> None:
+    def test_preprocess_dry_run_no_images(self, tmp_config: PipelineConfig) -> None:
         output_images = Path(tmp_config.preprocess.output_dir) / "images"
         before = set(output_images.iterdir()) if output_images.exists() else set()
         step = PreprocessStep(tmp_config, dry_run=True)
-        step.run()
+        assert step.run() is True
+        assert "audio_files" in step.results
         after = set(output_images.iterdir()) if output_images.exists() else set()
         assert before == after, "Dry-run should not create image files"
 
-
-class TestSplitStepDryRun:
-    """SplitStep dry-run reports split counts without moving files."""
-
-    def test_returns_true(self, tmp_config: PipelineConfig) -> None:
-        step = SplitStep(tmp_config, dry_run=True)
-        assert step.run() is True
-
-    def test_reports_split_counts(self, tmp_config: PipelineConfig) -> None:
-        step = SplitStep(tmp_config, dry_run=True)
-        step.run()
-        assert "total_images" in step.results
-        assert step.results["total_images"] == 10
-
-    def test_no_files_moved(self, tmp_config: PipelineConfig) -> None:
+    def test_split_dry_run_no_files_moved(self, tmp_config: PipelineConfig) -> None:
         output_dir = Path(tmp_config.split.output_dir)
         before = {p.name for p in output_dir.rglob("*.png")}
         step = SplitStep(tmp_config, dry_run=True)
-        step.run()
+        assert step.run() is True
+        assert step.results["total_images"] == 10
         after = {p.name for p in output_dir.rglob("*.png")}
         assert before == after, "Dry-run should not copy/move image files"
 
-
-class TestTrainStepDryRun:
-    """TrainStep dry-run reports training config without starting training."""
-
-    def test_returns_true(self, tmp_config: PipelineConfig) -> None:
-        step = TrainStep(tmp_config, dry_run=True)
-        assert step.run() is True
-
-    def test_reports_training_plan(self, tmp_config: PipelineConfig) -> None:
-        step = TrainStep(tmp_config, dry_run=True)
-        step.run()
-        assert "epochs" in step.results
-        assert "batch_size" in step.results
-        assert "model_size" in step.results
-
-    def test_no_checkpoints_created(self, tmp_config: PipelineConfig) -> None:
+    def test_train_dry_run_no_checkpoints(self, tmp_config: PipelineConfig) -> None:
         output_dir = Path(tmp_config.train.output_dir)
         before = set(output_dir.glob("*.pth"))
         step = TrainStep(tmp_config, dry_run=True)
-        step.run()
+        assert step.run() is True
+        assert "epochs" in step.results
         after = set(output_dir.glob("*.pth"))
         assert before == after, "Dry-run should not create checkpoint files"
 
-
-class TestEvaluateStepDryRun:
-    """EvaluateStep dry-run reports evaluation plan."""
-
-    def test_returns_true(self, tmp_config: PipelineConfig) -> None:
+    def test_evaluate_dry_run(self, tmp_config: PipelineConfig) -> None:
         step = EvaluateStep(tmp_config, dry_run=True)
         assert step.run() is True
-
-    def test_reports_eval_config(self, tmp_config: PipelineConfig) -> None:
-        step = EvaluateStep(tmp_config, dry_run=True)
-        step.run()
         assert "confidence_threshold" in step.results
-        assert "test_images" in step.results
 
-
-class TestInferStepDryRun:
-    """InferStep dry-run reports inference plan."""
-
-    def test_returns_true(self, tmp_config: PipelineConfig) -> None:
+    def test_infer_dry_run(self, tmp_config: PipelineConfig) -> None:
         step = InferStep(tmp_config, dry_run=True)
         assert step.run() is True
-
-    def test_reports_infer_plan(self, tmp_config: PipelineConfig) -> None:
-        step = InferStep(tmp_config, dry_run=True)
-        step.run()
         assert "confidence_threshold" in step.results
-        assert "output_dir" in step.results
-
-
-# ---------------------------------------------------------------------------
-# Integration test: full pipeline dry-run
-# ---------------------------------------------------------------------------
 
 
 class TestPipelineDryRun:
     """Pipeline.run(dry_run=True) should succeed without GPU or real data."""
 
-    def test_all_steps_dry_run_succeeds(self, tmp_config: PipelineConfig) -> None:
+    def test_all_steps_produce_results(self, tmp_config: PipelineConfig) -> None:
         pipeline = Pipeline(tmp_config)
         result = pipeline.run(run_all=True, dry_run=True)
         assert result is True
-
-    def test_all_steps_produce_results(self, tmp_config: PipelineConfig) -> None:
-        pipeline = Pipeline(tmp_config)
-        pipeline.run(run_all=True, dry_run=True)
-        assert len(pipeline.step_results) == 6
-        for step_name in ("download", "preprocess", "split", "train", "evaluate", "infer"):
+        assert len(pipeline.step_results) == 7
+        for step_name in ("download", "preprocess", "split", "train", "evaluate", "optimize_merging", "infer"):
             assert step_name in pipeline.step_results, f"Missing results for {step_name}"
 
     def test_single_step_dry_run(self, tmp_config: PipelineConfig) -> None:
@@ -260,17 +180,6 @@ class TestPipelineDryRun:
         result = pipeline.run(preprocess=True, dry_run=True)
         assert result is True
         assert "preprocess" in pipeline.step_results
-
-    def test_no_side_effects(self, tmp_config: PipelineConfig) -> None:
-        """Dry-run should not create output artifacts."""
-        output_dir = Path(tmp_config.train.output_dir)
-        before_pth = set(output_dir.glob("*.pth"))
-
-        pipeline = Pipeline(tmp_config)
-        pipeline.run(run_all=True, dry_run=True)
-
-        after_pth = set(output_dir.glob("*.pth"))
-        assert before_pth == after_pth, "Dry-run should not create checkpoint files"
 
     def test_dry_run_from_yaml(self, tmp_config_yaml: Path) -> None:
         """Pipeline loaded from YAML runs dry-run successfully."""

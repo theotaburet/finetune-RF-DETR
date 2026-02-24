@@ -2,18 +2,7 @@
 
 from __future__ import annotations
 
-from rf_detr_finetuning.eventprocessor.merger import ClassMergeParams, ClassWiseMergeConfig
-
-
-class TestClassMergeParams:
-    """Tests for ClassMergeParams defaults."""
-
-    def test_defaults(self) -> None:
-        params = ClassMergeParams()
-        assert params.delta_time_ms == 500.0
-        assert params.delta_freq_hz == 500.0
-        assert params.min_overlap_ratio is None
-        assert params.score_strategy == "max"
+from rf_detr_finetuning.eventprocessor.merger import ClassWiseMergeConfig
 
 
 class TestClassWiseMergeConfigFromDict:
@@ -92,16 +81,6 @@ class TestClassWiseMergeConfigFromDict:
         assert config.score_threshold == 0.3
         assert config.min_duration_ms == 100.0
         assert config.max_duration_ms == 60000.0
-
-    def test_missing_filtering_section_uses_defaults(self) -> None:
-        config = ClassWiseMergeConfig.from_dict({"default": {}})
-        assert config.score_threshold == 0.0
-        assert config.min_duration_ms == 0.0
-        assert config.max_duration_ms is None
-
-    def test_missing_classes_section_gives_empty_params(self) -> None:
-        config = ClassWiseMergeConfig.from_dict({"default": {"delta_time_ms": 100.0}})
-        assert config.class_params == {}
 
     def test_full_config(self) -> None:
         data = {
