@@ -290,15 +290,23 @@ class AudioChunker:
                 for evt in meta_events:
                     hierarchy = evt.get("label_hierarchy", "")
                     label = _extract_label(hierarchy) if hierarchy else evt.get("category", "unknown")
+                    is_file_level = evt.get("is_file_level", False)
+                    # File-level events span the entire audio regardless of stored times
+                    if is_file_level:
+                        t_start = 0
+                        t_end = actual_duration_ms
+                    else:
+                        t_start = evt.get("time_start_ms", 0)
+                        t_end = evt.get("time_end_ms", actual_duration_ms)
                     events.append(
                         {
-                            "time_start_ms": evt.get("time_start_ms", 0),
-                            "time_end_ms": evt.get("time_end_ms", actual_duration_ms),
-                            "hz_min": evt.get("hz_min", self.fmin),
-                            "hz_max": evt.get("hz_max", fmax),
+                            "time_start_ms": t_start,
+                            "time_end_ms": t_end,
+                            "hz_min": evt.get("hz_min") or self.fmin,
+                            "hz_max": evt.get("hz_max") or fmax,
                             "category": label or "unknown",
                             "category_id": evt.get("category_id", 0),
-                            "is_file_level": evt.get("is_file_level", False),
+                            "is_file_level": is_file_level,
                         }
                     )
             else:
@@ -310,8 +318,8 @@ class AudioChunker:
                     {
                         "time_start_ms": 0,
                         "time_end_ms": actual_duration_ms,
-                        "hz_min": meta.get("hz_min", self.fmin),
-                        "hz_max": meta.get("hz_max", fmax),
+                        "hz_min": meta.get("hz_min") or self.fmin,
+                        "hz_max": meta.get("hz_max") or fmax,
                         "category": label or "unknown",
                         "category_id": 0,
                         "is_file_level": True,

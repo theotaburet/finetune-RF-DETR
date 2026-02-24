@@ -1329,22 +1329,21 @@ class DataDownloader:
                 f.write(audio_data)
 
             # Save sidecar metadata JSON alongside the .wav file
-            # Event times must be relative to the clip (sound segment) start
+            # Each downloaded clip IS the sound segment, so events are file-level.
+            # We don't store absolute times because the API may return a clip
+            # shorter than the annotated segment; the chunker will use the actual
+            # audio duration to create bboxes spanning each chunk.
             sidecar_path = output_path.with_suffix(".json")
-            clip_start_s = sound.start_s
             sidecar_events = []
             for evt in events_meta:
-                relative_start_s = max(evt.get("start_s", 0) - clip_start_s, 0)
-                relative_end_s = evt.get("end_s", 0) - clip_start_s
                 sidecar_events.append(
                     {
                         "label_hierarchy": evt.get("label_hierarchy", ""),
-                        "hz_min": evt.get("hz_min", 0),
-                        "hz_max": evt.get("hz_max", 0),
-                        "time_start_ms": relative_start_s * 1000,
-                        "time_end_ms": relative_end_s * 1000,
+                        "hz_min": evt.get("hz_min") or 0,
+                        "hz_max": evt.get("hz_max") or 0,
                         "confidence": evt.get("confidence"),
                         "labeler": evt.get("labeler"),
+                        "is_file_level": True,
                     }
                 )
             sidecar_data = {

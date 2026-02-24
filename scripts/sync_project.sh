@@ -87,7 +87,15 @@ RSYNC_ARGS=(
   --exclude=.git/
   --exclude=.venv/
   --exclude=__pycache__/
-  --exclude=*.pyc
+  --exclude='*.pyc'
+  --exclude=data/
+  --exclude=output/
+  --exclude='*.pth'
+  --exclude='.eggs/'
+  --exclude='*.egg-info/'
+  --exclude='.ruff_cache/'
+  --exclude='.pytest_cache/'
+  --exclude='wandb/'
 )
 
 if [[ "$DRY_RUN" == "true" ]]; then

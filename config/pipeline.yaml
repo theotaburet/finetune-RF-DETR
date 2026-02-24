@@ -5,7 +5,7 @@ description: RF-DETR Audio Event Detection Pipeline
 download:
   enabled: false
   config_file: config/download.yaml  # Use existing download config
-  max_labels: 100  # Quick test mode - set to null for full download
+  max_labels: 10  # Quick test mode - set to null for full download
   force: false
 
 # Class names - ORDER MATTERS! Index = Class ID (0-based)
