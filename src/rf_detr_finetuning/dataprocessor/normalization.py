@@ -1,15 +1,11 @@
-"""Spectrogram normalization and resizing module.
-
-Uses scipy.ndimage for proper interpolation without aliasing artifacts.
-
-"""
+"""Spectrogram normalization and resizing module."""
 
 from __future__ import annotations
 
 import logging
 
+import cv2
 import numpy as np
-from scipy.ndimage import zoom
 
 logger = logging.getLogger(__name__)
 
@@ -20,20 +16,17 @@ def resize_spectrogram(
     target_height: int,
     order: int = 1,
 ) -> np.ndarray:
-    """Resize spectrogram to target dimensions using scipy.ndimage.zoom.
+    """Resize spectrogram to target dimensions.
 
     Strategy to preserve time resolution:
     - HEIGHT (frequency axis): Interpolate - visual scaling is acceptable
     - WIDTH (time axis): Pad with zeros - preserves time resolution
 
-    Uses scipy.ndimage.zoom for proper interpolation without aliasing.
-
     Args:
         spec: Spectrogram array (H, W) or (H, W, C)
         target_width: Target width in pixels
         target_height: Target height in pixels
-        order: Interpolation order (0=nearest, 1=bilinear, 3=cubic)
-            Default 1 (bilinear) is a good balance of quality and speed
+        order: Kept for API compatibility (ignored; uses INTER_LINEAR)
 
     Returns:
         Resized/padded spectrogram as numpy array
@@ -47,12 +40,7 @@ def resize_spectrogram(
 
     # Step 1: Resize HEIGHT to target (interpolate frequency axis)
     if orig_h != target_height:
-        zoom_h = target_height / orig_h
-        if spec.ndim == 2:
-            spec = zoom(spec, (zoom_h, 1.0), order=order)
-        else:
-            # For multi-channel (H, W, C), zoom only spatial dims
-            spec = zoom(spec, (zoom_h, 1.0, 1.0), order=order)
+        spec = cv2.resize(spec, (orig_w, target_height), interpolation=cv2.INTER_LINEAR)
 
     # Step 2: PAD WIDTH to target (preserves time resolution)
     current_h, current_w = spec.shape[:2]
@@ -65,7 +53,6 @@ def resize_spectrogram(
             padded[:, :current_w, :] = spec
         return padded
     elif current_w > target_width:
-        # Crop if width is larger (shouldn't happen normally)
         return spec[:, :target_width]
     else:
         return spec
@@ -83,10 +70,10 @@ def resize_spectrogram_full(
     Use when time-stretching is acceptable (e.g., visualization).
 
     Args:
-        spec: Spectrogram array (H, W)
+        spec: Spectrogram array (H, W) or (H, W, C)
         target_width: Target width
         target_height: Target height
-        order: Interpolation order
+        order: Kept for API compatibility (ignored; uses INTER_LINEAR)
 
     Returns:
         Resized spectrogram
@@ -97,13 +84,7 @@ def resize_spectrogram_full(
     if orig_h == target_height and orig_w == target_width:
         return spec
 
-    zoom_h = target_height / orig_h
-    zoom_w = target_width / orig_w
-
-    if spec.ndim == 2:
-        return zoom(spec, (zoom_h, zoom_w), order=order)
-    else:
-        return zoom(spec, (zoom_h, zoom_w, 1.0), order=order)
+    return cv2.resize(spec, (target_width, target_height), interpolation=cv2.INTER_LINEAR)
 
 
 def spectrogram_to_image_array(

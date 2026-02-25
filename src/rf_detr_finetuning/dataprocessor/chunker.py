@@ -25,7 +25,6 @@ from rf_detr_finetuning.dataprocessor.chunking import (
     TimeBasedFFTConfig,
     align_bbox_to_chunk,
     compute_chunk_boundaries,
-    extract_audio_chunk,
 )
 from rf_detr_finetuning.dataprocessor.features import compute_mel_spectrogram
 from rf_detr_finetuning.dataprocessor.io import load_audio_file
@@ -147,6 +146,9 @@ class AudioChunker:
     ) -> list[AudioChunk]:
         """Chunk audio into fixed-size segments with aligned bboxes.
 
+        Computes the mel spectrogram once for the full audio file, then slices
+        columns per chunk to avoid redundant FFT computation.
+
         Args:
             audio: Audio array (1D)
             sample_rate: Sample rate
@@ -163,6 +165,7 @@ class AudioChunker:
         events = events or []
         total_duration_ms = (len(audio) / sample_rate) * 1000
         fmax = self.fmax if self.fmax else sample_rate / 2
+        hop_length = self.fft_config.get_hop_length(sample_rate)
 
         boundaries = compute_chunk_boundaries(total_duration_ms, self.chunk_config)
 
@@ -170,37 +173,47 @@ class AudioChunker:
             logger.warning(f"No chunks generated for audio of {total_duration_ms:.1f}ms")
             return []
 
+        # Compute mel spectrogram ONCE for the entire audio file
+        full_spec = self._compute_spectrogram(audio, sample_rate)
+
+        # Convert full spectrogram to image ONCE (colormap, flip, uint8)
+        if self.preprocessing_config is not None:
+            full_spec_img = normalize_spectrogram(full_spec, self.preprocessing_config.dynamic_range)
+        else:
+            full_spec_img = spectrogram_to_image_array(full_spec)
+
+        full_width = full_spec_img.shape[1]
+
         chunks = []
         for idx, (start_ms, end_ms) in enumerate(boundaries):
-            chunk_audio, is_padded, padding_ms = extract_audio_chunk(
-                audio,
-                sample_rate,
-                start_ms,
-                end_ms,
-                self.chunk_config.padding_mode,
-                random_pad_position=self.chunk_config.random_pad_position,
-            )
+            # Convert ms boundaries to spectrogram frame indices
+            start_frame = int(round(start_ms / 1000.0 * sample_rate / hop_length))
+            end_frame = int(round(end_ms / 1000.0 * sample_rate / hop_length))
 
-            # Compute spectrogram
-            spec = self._compute_spectrogram(chunk_audio, sample_rate)
+            # Clamp to valid range
+            start_frame = max(0, start_frame)
+            end_frame = min(full_width, end_frame)
 
-            # Note: do NOT flip here. spectrogram_to_image (via ezakodio.viz) already
-            # flips vertically internally (high frequencies at top). Flipping here too
-            # would result in the image being upside down (double flip).
+            # Slice columns from pre-computed image
+            spec_img = full_spec_img[:, start_frame:end_frame].copy()
+            spec_raw = full_spec[:, start_frame:end_frame]
 
-            # Apply dynamic range normalization if configured
-            if self.preprocessing_config is not None:
-                spec_img = normalize_spectrogram(spec, self.preprocessing_config.dynamic_range)
-            else:
-                spec_img = spectrogram_to_image_array(spec)
+            # Determine actual content width before any padding/resize
+            actual_width = spec_img.shape[1]
+
+            # Check if this chunk needed audio padding (tail chunk)
+            expected_samples = int((end_ms - start_ms) / 1000.0 * sample_rate)
+            available_samples = len(audio) - int(start_ms / 1000.0 * sample_rate)
+            is_padded = available_samples < expected_samples
+            padding_ms = max(0.0, (expected_samples - available_samples) / sample_rate * 1000.0) if is_padded else 0.0
 
             # Compute per-chunk stats from raw spectrogram (before normalization)
             chunk_stats = ChunkStats(
-                spec_min=float(np.min(spec)),
-                spec_max=float(np.max(spec)),
-                spec_mean=float(np.mean(spec)),
-                spec_std=float(np.std(spec)),
-                dynamic_range_db=float(np.max(spec) - np.min(spec)),
+                spec_min=float(np.min(spec_raw)),
+                spec_max=float(np.max(spec_raw)),
+                spec_mean=float(np.mean(spec_raw)),
+                spec_std=float(np.std(spec_raw)),
+                dynamic_range_db=float(np.max(spec_raw) - np.min(spec_raw)),
                 saturation_ratio=float(np.mean((spec_img == 0) | (spec_img == 255))),
                 padding_ratio=padding_ms / (end_ms - start_ms) if (end_ms - start_ms) > 0 else 0.0,
             )
@@ -208,9 +221,6 @@ class AudioChunker:
             orig_height, orig_width = spec_img.shape[:2]
             target_w = self.chunk_config.target_width or orig_width
             target_h = self.chunk_config.target_height or orig_height
-
-            # Track actual content width before padding
-            actual_width = orig_width
 
             if (target_w != orig_width) or (target_h != orig_height):
                 spec_img = resize_spectrogram(spec_img, target_w, target_h)

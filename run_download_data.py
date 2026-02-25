@@ -1060,12 +1060,26 @@ def split_sounds_into_datasets(
         sound_indices = np.arange(len(sounds))
         rng.shuffle(sound_indices)
 
-        # Reserve test files
+        # Reserve test sounds - but also exclude all other sounds sharing the same
+        # source files to prevent leakage (a source file may have many sound segments)
         test_count = min(config.test_files, len(sounds))
-        test_indices = set(sound_indices[:test_count].tolist())
-        remaining_indices = sound_indices[test_count:]
+        initial_test_indices = set(sound_indices[:test_count].tolist())
+        test_source_files = {sounds[i].source_file for i in initial_test_indices}
 
-        console.print(f"  Test set: {test_count} sounds (randomly selected)")
+        test_indices = set()
+        remaining_indices_list = []
+        for i in sound_indices:
+            if sounds[i].source_file in test_source_files:
+                test_indices.add(i)
+            else:
+                remaining_indices_list.append(i)
+
+        remaining_indices = np.array(remaining_indices_list)
+
+        console.print(
+            f"  Test set: {len(test_indices)} sounds from {len(test_source_files)} source file(s) "
+            f"(requested {test_count}, expanded to avoid leakage)"
+        )
 
     # Split remaining into train/val
     if len(remaining_indices) > 0:

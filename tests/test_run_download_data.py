@@ -374,15 +374,24 @@ class TestSplitSoundsIntoDatasets:
         return sounds
 
     def test_split_random_selection(self):
-        """Test random test file selection."""
+        """Test random test file selection with source-file-level isolation."""
         sounds = self.create_sample_sounds(20)
         config = SplitConfig(enabled=True, test_files=5, train_ratio=0.8, val_ratio=0.2)
 
         result = split_sounds_into_datasets(sounds, config, dry_run=True)
 
-        assert len(result["test"]) == 5
-        assert len(result["train"]) == 12  # 80% of 15
-        assert len(result["val"]) == 3  # 20% of 15
+        # Total sounds must be preserved
+        assert len(result["train"]) + len(result["val"]) + len(result["test"]) == 20
+
+        # Test set must be >= requested size (expanded to cover whole source files)
+        assert len(result["test"]) >= 5
+
+        # No source file may appear in both test and train/val
+        train_sources = {s.source_file for s in result["train"]}
+        val_sources = {s.source_file for s in result["val"]}
+        test_sources = {s.source_file for s in result["test"]}
+        assert not (train_sources & test_sources), "Train/test source file overlap"
+        assert not (val_sources & test_sources), "Val/test source file overlap"
 
     def test_split_with_source_files(self):
         """Test test set from specified source files."""
