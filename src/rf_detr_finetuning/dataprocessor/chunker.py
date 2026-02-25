@@ -27,7 +27,7 @@ from rf_detr_finetuning.dataprocessor.chunking import (
     compute_chunk_boundaries,
     extract_audio_chunk,
 )
-from rf_detr_finetuning.dataprocessor.features import compute_mel_spectrogram, flip_spectrogram
+from rf_detr_finetuning.dataprocessor.features import compute_mel_spectrogram
 from rf_detr_finetuning.dataprocessor.io import load_audio_file
 from rf_detr_finetuning.dataprocessor.normalization import resize_spectrogram, spectrogram_to_image_array
 from rf_detr_finetuning.dataprocessor.preprocessing import (
@@ -184,8 +184,9 @@ class AudioChunker:
             # Compute spectrogram
             spec = self._compute_spectrogram(chunk_audio, sample_rate)
 
-            # Flip vertically (high frequencies at top)
-            spec = flip_spectrogram(spec)
+            # Note: do NOT flip here. spectrogram_to_image (via ezakodio.viz) already
+            # flips vertically internally (high frequencies at top). Flipping here too
+            # would result in the image being upside down (double flip).
 
             # Apply dynamic range normalization if configured
             if self.preprocessing_config is not None:

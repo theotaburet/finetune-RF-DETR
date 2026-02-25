@@ -3,9 +3,9 @@ description: RF-DETR Audio Event Detection Pipeline
 
 # Download step - fetches labeled audio from EKB API
 download:
-  enabled: false
-  config_file: config/download.yaml  # Use existing download config
-  max_labels: 10  # Quick test mode - set to null for full download
+  enabled: true
+  config_file: config/download.yaml
+  max_labels: null  # Use limit from download.yaml (1000)
   force: false
 
 # Class names - ORDER MATTERS! Index = Class ID (0-based)
@@ -14,12 +14,12 @@ download:
 #   → humpback_whale = class 0, killer_whale = class 1, etc.
 #
 # These MUST match the classes in merging.yaml (e.g., classes.0, classes.1)
-class_names: []
+class_names: ["mysticeti"]
 
 # Alternative: load from COCO categories file
 classes_file: null
 preprocess:
-  enabled: false
+  enabled: true
   audio_dir: data/downloaded
   metadata_dir: data/downloaded
   output_dir: data/processed
@@ -32,7 +32,7 @@ preprocess:
   debug_visualize: false
   max_files: null  # Process all files (set to number for testing)
 split:
-  enabled: false
+  enabled: true
   input_dir: data/processed
   output_dir: data/split_dataset
   train_ratio: 0.7
@@ -44,7 +44,7 @@ train:
   enabled: true
   dataset_dir: data/split_dataset
   output_dir: output
-  model_size: base
+  model_size: small
   pretrained_weights: null
   epochs: 50
   batch_size: 4

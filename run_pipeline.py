@@ -1058,6 +1058,12 @@ class PreprocessStep(PipelineStep):
                         # category IDs are valid indices into the model's output.
                         for bbox in chunk.bboxes:
                             label = bbox.category or "unknown"
+
+                            # Skip classes not in the allowed list
+                            allowed = self.config.class_names
+                            if allowed and label not in allowed:
+                                continue
+
                             if label not in class_to_id:
                                 class_to_id[label] = len(class_to_id)
 
@@ -1346,57 +1352,80 @@ class SplitStep(PipelineStep):
                         f"  [yellow]![/yellow] {unmatched} images could not be mapped to a split, defaulting to train"
                     )
 
-                # Rebalance valid set if it's too small for meaningful evaluation.
-                # The download step splits at the audio-file level, which can produce
-                # very few valid images if few short audio files are assigned to valid.
-                # We fix this by moving entire audio stems from train to valid,
-                # preserving audio-level split integrity (no data leakage).
+                # Rebalance valid set to be class-balanced using audio stems.
+                # We move entire audio stems from train to valid to avoid leakage,
+                # targeting an equal number of images per class in validation.
                 split_counts = {"train": 0, "valid": 0, "test": 0}
                 for split in image_split_map.values():
                     split_counts[split] = split_counts.get(split, 0) + 1
 
+                # Build label coverage per image index
+                img_id_to_idx = {img["id"]: i for i, img in enumerate(coco_data["images"])}
+                image_to_labels: dict[int, set[int]] = {i: set() for i in range(len(coco_data["images"]))}
+                for ann in coco_data["annotations"]:
+                    img_idx = img_id_to_idx.get(ann["image_id"])
+                    if img_idx is not None:
+                        image_to_labels.setdefault(img_idx, set()).add(int(ann["category_id"]))
+
+                # Group train images by audio stem
+                stem_to_train_indices: dict[str, list[int]] = {}
+                for i, split in image_split_map.items():
+                    if split == "train":
+                        img_name = Path(coco_data["images"][i]["file_name"]).name
+                        match = chunk_pattern.match(img_name)
+                        if match:
+                            stem = match.group(1)
+                            stem_to_train_indices.setdefault(stem, []).append(i)
+
+                # Current class counts in valid
+                valid_counts: dict[int, int] = {}
+                for i, split in image_split_map.items():
+                    if split == "valid":
+                        for label in image_to_labels.get(i, set()):
+                            valid_counts[label] = valid_counts.get(label, 0) + 1
+
+                # Determine target per class based on desired val size
                 non_test_total = split_counts["train"] + split_counts["valid"]
-                target_valid = max(int(non_test_total * cfg.val_ratio), 100)
+                n_classes = len(coco_data.get("categories", []))
+                target_valid = max(int(non_test_total * cfg.val_ratio), n_classes)
+                target_per_class = max(1, target_valid // max(1, n_classes))
 
-                if split_counts["valid"] < target_valid and split_counts["train"] > target_valid:
-                    console.print(
-                        f"  [yellow]![/yellow] Valid set too small ({split_counts['valid']} images, "
-                        f"need ~{target_valid}). Rebalancing from train..."
-                    )
+                # Score stems by how much they help under-represented classes
+                def _stem_gain(stem: str) -> int:
+                    gain = 0
+                    for idx in stem_to_train_indices.get(stem, []):
+                        for label in image_to_labels.get(idx, set()):
+                            if valid_counts.get(label, 0) < target_per_class:
+                                gain += 1
+                    return gain
 
-                    # Group train images by audio stem
-                    stem_to_train_indices: dict[str, list[int]] = {}
-                    for i, split in image_split_map.items():
-                        if split == "train":
-                            img_name = Path(coco_data["images"][i]["file_name"]).name
-                            match = chunk_pattern.match(img_name)
-                            if match:
-                                stem = match.group(1)
-                                stem_to_train_indices.setdefault(stem, []).append(i)
+                stems = list(stem_to_train_indices.keys())
+                rng = np.random.default_rng(cfg.seed)
+                rng.shuffle(stems)
+                stems.sort(key=_stem_gain, reverse=True)
 
-                    # Shuffle stems deterministically, then move to valid until target is reached
-                    stems = list(stem_to_train_indices.keys())
-                    rng = np.random.default_rng(cfg.seed)
-                    rng.shuffle(stems)
+                moved_images = 0
+                moved_stems = 0
+                for stem in stems:
+                    if split_counts["valid"] >= target_valid:
+                        break
+                    indices = stem_to_train_indices[stem]
+                    if not indices:
+                        continue
+                    for idx in indices:
+                        image_split_map[idx] = "valid"
+                        for label in image_to_labels.get(idx, set()):
+                            valid_counts[label] = valid_counts.get(label, 0) + 1
+                    split_counts["valid"] += len(indices)
+                    split_counts["train"] -= len(indices)
+                    moved_images += len(indices)
+                    moved_stems += 1
 
-                    moved_images = 0
-                    moved_stems = 0
-                    for stem in stems:
-                        if split_counts["valid"] >= target_valid:
-                            break
-                        indices = stem_to_train_indices[stem]
-                        for idx in indices:
-                            image_split_map[idx] = "valid"
-                        split_counts["valid"] += len(indices)
-                        split_counts["train"] -= len(indices)
-                        moved_images += len(indices)
-                        moved_stems += 1
-
-                    console.print(
-                        f"  [green]✓[/green] Rebalanced: moved {moved_stems} audio stems "
-                        f"({moved_images} images) from train to valid. "
-                        f"New sizes: train={split_counts['train']}, valid={split_counts['valid']}"
-                    )
+                console.print(
+                    f"  [green]✓[/green] Balanced valid: target ~{target_per_class}/class, "
+                    f"moved {moved_stems} stems ({moved_images} images). "
+                    f"New sizes: train={split_counts['train']}, valid={split_counts['valid']}"
+                )
 
                 # Assign images and annotations using the mapping
                 id_to_idx = {img["id"]: i for i, img in enumerate(coco_data["images"])}
@@ -1428,17 +1457,55 @@ class SplitStep(PipelineStep):
                     f"(train={cfg.train_ratio}, val={cfg.val_ratio}, test={cfg.test_ratio})"
                 )
 
-                # Random shuffle split (original behavior)
+                # Random shuffle split with class-balanced validation
                 n = len(coco_data["images"])
                 indices = np.arange(n)
                 rng = np.random.default_rng(cfg.seed)
                 rng.shuffle(indices)
 
                 n_train = int(n * cfg.train_ratio)
-                n_val = int(n * cfg.val_ratio)
 
-                train_indices = set(indices[:n_train].tolist())
-                val_indices = set(indices[n_train : n_train + n_val].tolist())
+                id_to_idx = {img["id"]: i for i, img in enumerate(coco_data["images"])}
+                image_to_labels: dict[int, set[int]] = {i: set() for i in range(n)}
+                for ann in coco_data["annotations"]:
+                    img_idx = id_to_idx.get(ann["image_id"])
+                    if img_idx is not None:
+                        image_to_labels.setdefault(img_idx, set()).add(int(ann["category_id"]))
+
+                label_to_indices: dict[int, list[int]] = {}
+                for i in indices:
+                    idx = int(i)
+                    labels = image_to_labels.get(idx, set())
+                    if not labels:
+                        label_to_indices.setdefault(-1, []).append(idx)
+                    for label in labels:
+                        label_to_indices.setdefault(label, []).append(idx)
+
+                n_classes = len(coco_data.get("categories", []))
+                target_valid = max(int(n * cfg.val_ratio), n_classes)
+                target_per_class = max(1, target_valid // max(1, n_classes))
+
+                val_indices: set[int] = set()
+                for label, label_indices in label_to_indices.items():
+                    rng.shuffle(label_indices)
+                    take = target_per_class
+                    for idx in label_indices:
+                        if len(val_indices) >= target_valid:
+                            break
+                        if idx in val_indices:
+                            continue
+                        val_indices.add(idx)
+                        take -= 1
+                        if take <= 0:
+                            break
+
+                train_indices = set(indices[:n_train].tolist()) - val_indices
+                if len(train_indices) < n_train:
+                    remaining = [i for i in indices if i not in val_indices and i not in train_indices]
+                    for idx in remaining:
+                        if len(train_indices) >= n_train:
+                            break
+                        train_indices.add(idx)
 
                 id_to_idx = {img["id"]: i for i, img in enumerate(coco_data["images"])}
 

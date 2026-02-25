@@ -963,8 +963,9 @@ def parse_label_response(label: dict) -> LabeledEvent:
     return LabeledEvent(
         label_id=label["uuid"],
         source_file=label.get("source_path", ""),
-        source_start=label.get("source_start", 0.0),
-        source_end=label.get("source_end", 0.0),
+        # API returns times in milliseconds despite the field name; convert to seconds.
+        source_start=label.get("source_start", 0.0) / 1000.0,
+        source_end=label.get("source_end", 0.0) / 1000.0,
         label_hierarchy=label.get("label_hierarchy", "unknown"),
         hz_min=label.get("hz_min"),
         hz_max=label.get("hz_max"),
@@ -1347,22 +1348,30 @@ class DataDownloader:
             # shorter than the annotated segment; the chunker will use the actual
             # audio duration to create bboxes spanning each chunk.
             sidecar_path = output_path.with_suffix(".json")
-            sidecar_events = []
-            for evt in events_meta:
-                sidecar_events.append(
-                    {
-                        "label_hierarchy": evt.get("label_hierarchy", ""),
-                        "hz_min": evt.get("hz_min") or 0,
-                        "hz_max": evt.get("hz_max") or 0,
-                        "confidence": evt.get("confidence"),
-                        "labeler": evt.get("labeler"),
-                        "is_file_level": True,
-                    }
-                )
+            merged_labels = sorted(
+                {evt.get("label_hierarchy", "") for evt in events_meta if evt.get("label_hierarchy")}
+            )
+            primary_label = merged_labels[0] if merged_labels else "unknown"
+            hz_mins = [float(evt["hz_min"]) for evt in events_meta if evt.get("hz_min") is not None]
+            hz_maxs = [float(evt["hz_max"]) for evt in events_meta if evt.get("hz_max") is not None]
+            confidences = [float(evt["confidence"]) for evt in events_meta if evt.get("confidence") is not None]
+            labelers = [evt.get("labeler") for evt in events_meta if evt.get("labeler")]
+
+            merged_event = {
+                "label_hierarchy": primary_label,
+                "hz_min": min(hz_mins) if hz_mins else 0,
+                "hz_max": max(hz_maxs) if hz_maxs else 0,
+                "confidence": max(confidences) if confidences else None,
+                "labeler": labelers[0] if labelers else None,
+                "is_file_level": True,
+                "grouped_labels": merged_labels,
+            }
+
             sidecar_data = {
                 "uuid": sound.sound_id,
                 "source_file": sound.source_file,
-                "events": sidecar_events,
+                "grouped_events": True,
+                "events": [merged_event],
             }
             with open(sidecar_path, "w") as f:
                 json.dump(sidecar_data, f, indent=2)
@@ -1395,16 +1404,38 @@ class DataDownloader:
 
         """
         console.print(f"\n[cyan]Processing: {source_file}[/cyan] [{split}]")
-        console.print(f"  [dim]{len(events)} events found[/dim]")
+
+        # Show raw events before grouping
+        sorted_events = sorted(events, key=lambda e: e.source_start)
+        console.print(f"  [dim]{len(sorted_events)} raw events (before grouping):[/dim]")
+        for i, evt in enumerate(sorted_events):
+            freq_str = f", {evt.hz_min:.0f}-{evt.hz_max:.0f} Hz" if evt.hz_min and evt.hz_max else ""
+            console.print(
+                f"    [dim][{i:02d}] {evt.source_start:.1f}s - {evt.source_end:.1f}s "
+                f"({evt.duration_s:.1f}s{freq_str}, conf={evt.confidence:.2f})[/dim]"
+            )
 
         # Group overlapping events into sounds
         sounds = group_overlapping_events(events, source_file)
-        console.print(f"  [dim]Grouped into {len(sounds)} sound segments[/dim]")
+        console.print(f"  [dim]Grouped into {len(sounds)} sound segments:[/dim]")
 
         # Show grouping details
         for sound in sounds:
             labels = ", ".join(sorted(sound.label_hierarchies))
-            console.print(f"    [dim]{sound.sound_id}: {sound.start_s:.1f}s - {sound.end_s:.1f}s ({labels})[/dim]")
+            # Find which raw event indices ended up in this segment
+            indices = [i for i, evt in enumerate(sorted_events) if evt.label_id in {e.label_id for e in sound.events}]
+            idx_str = ", ".join(str(i) for i in indices)
+            console.print(
+                f"    [dim]{sound.sound_id}: {sound.start_s:.1f}s - {sound.end_s:.1f}s "
+                f"({sound.duration_s:.1f}s, events [{idx_str}]) [{labels}][/dim]"
+            )
+            for evt in sound.events:
+                console.print(
+                    f"      [dim]↳ {evt.source_start:.1f}s - {evt.source_end:.1f}s "
+                    f"({evt.duration_s:.1f}s"
+                    f"{f', {evt.hz_min:.0f}-{evt.hz_max:.0f} Hz' if evt.hz_min and evt.hz_max else ''}"
+                    f", conf={evt.confidence:.2f})[/dim]"
+                )
 
         if self.dry_run:
             # Return mock results for dry run

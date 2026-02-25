@@ -125,8 +125,8 @@ def sample_label_response() -> dict:
     return {
         "uuid": "test-uuid-123",
         "source_path": "audio/test.wav",
-        "source_start": 10.0,
-        "source_end": 20.0,
+        "source_start": 10000.0,  # milliseconds (API field name is misleading)
+        "source_end": 20000.0,  # milliseconds
         "label_hierarchy": "marine/ship/engine",
         "hz_min": 100.0,
         "hz_max": 1000.0,
@@ -336,8 +336,8 @@ class TestParseLabelResponse:
 
         assert event.label_id == "test-uuid-123"
         assert event.source_file == "audio/test.wav"
-        assert event.source_start == 10.0
-        assert event.source_end == 20.0
+        assert event.source_start == 10.0  # 10000 ms / 1000
+        assert event.source_end == 20.0  # 20000 ms / 1000
         assert event.label_hierarchy == "marine/ship/engine"
         assert event.hz_min == 100.0
         assert event.hz_max == 1000.0

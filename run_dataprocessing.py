@@ -184,6 +184,17 @@ def parse_args() -> argparse.Namespace:
         help="Preemphasis coefficient (0 to disable)",
     )
 
+    # Filtering options
+    filter_group = parser.add_argument_group("Filtering")
+    filter_group.add_argument(
+        "--class-names",
+        type=str,
+        nargs="+",
+        default=None,
+        metavar="CLASS",
+        help="Only include events matching these class names. If omitted, all classes are included.",
+    )
+
     # Debug options
     debug_group = parser.add_argument_group("Debug")
     debug_group.add_argument(
@@ -597,6 +608,11 @@ def main() -> int:
                 events = []
                 for event in raw_events:
                     label = event.get("label", "unknown")
+
+                    # Skip events whose class is not in the allowed list
+                    if args.class_names and label not in args.class_names:
+                        continue
+
                     if label not in categories:
                         categories[label] = len(categories) + 1
                     cat_id = categories[label]

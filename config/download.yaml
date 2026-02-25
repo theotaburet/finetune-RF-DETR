@@ -67,7 +67,7 @@ filters:
   sources: null
 
   # Filter by label hierarchy (partial match supported)
-  label_hierarchy: null
+  label_hierarchy: "mysticeti"
 
   # Filter by labeler name/email
   labeler: null
@@ -89,7 +89,7 @@ filters:
 # Download Limits
 limits:
   # Maximum number of labels to download (null = no limit)
-  max_labels: null
+  max_labels: 1000
 
 # Advanced Options
 advanced:

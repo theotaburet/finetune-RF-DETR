@@ -340,11 +340,12 @@ def align_bbox_to_chunk(
         if mel_range <= 0:
             return None
 
-        # After np.flipud, high frequencies are at TOP (y=0)
+        # ezakodio.viz.spectrogram_to_image flips vertically: high frequencies at TOP (y=0)
+        # Compute normalized positions (0=low-freq end, 1=high-freq end), then flip.
         y_top = ((event_mel_max - mel_min) / mel_range) * chunk_height_px
         y_bottom = ((event_mel_min - mel_min) / mel_range) * chunk_height_px
 
-        # Flip Y axis for flipped spectrogram
+        # Flip Y to match image convention where y=0 is at the top
         y_top = chunk_height_px - y_top
         y_bottom = chunk_height_px - y_bottom
 
