@@ -46,14 +46,14 @@ train:
   output_dir: output
   model_size: base
   pretrained_weights: null
-  epochs: 5
-  batch_size: 2
+  epochs: 50
+  batch_size: 4
   learning_rate: 0.0001
   num_workers: 4
   device: cuda
   resume_from: null
   early_stopping_patience: 10
-  save_every_n_epochs: 5
+  save_every_n_epochs: 10
 evaluate:
   enabled: false
   weights: output/checkpoint_best.pth

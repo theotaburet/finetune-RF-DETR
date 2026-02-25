@@ -125,6 +125,7 @@ class SplitConfig:
     val_ratio: float = 0.2
     seed: int = 42
     stratify_val: bool = True
+    match_test_classes: bool = False
 
     def __post_init__(self) -> None:
         """Validate split ratios."""
@@ -246,6 +247,7 @@ class DownloadConfig:
                 "val_ratio": self.split.val_ratio,
                 "seed": self.split.seed,
                 "stratify_val": self.split.stratify_val,
+                "match_test_classes": self.split.match_test_classes,
             },
             "filters": {
                 "sources": self.filters.sources,
@@ -1598,6 +1600,16 @@ class DataDownloader:
 
         console.print(f"[green]Total TRAIN/VAL labels: {len(trainval_labels)}[/green]")
 
+        # Step 3: Enrich train/val with missing test classes (if enabled)
+        if self.config.split.enabled and self.config.split.match_test_classes and test_labels:
+            trainval_labels = self._enrich_trainval_with_test_classes(
+                test_labels=test_labels,
+                trainval_labels=trainval_labels,
+                filters=filters,
+                test_source_filenames=test_source_filenames,
+                test_source_paths=test_source_paths,
+            )
+
         # Combine all labels
         all_labels = test_labels + trainval_labels
 
@@ -1675,6 +1687,174 @@ class DataDownloader:
         self._print_summary(all_results, split_results, total_events_before_grouping)
 
         return all_results
+
+    def _enrich_trainval_with_test_classes(
+        self,
+        test_labels: list[dict],
+        trainval_labels: list[dict],
+        filters: dict[str, Any],
+        test_source_filenames: set[str],
+        test_source_paths: set[str],
+    ) -> list[dict]:
+        """Fetch additional train/val labels for classes present in test but missing from train/val.
+
+        Queries the API for each missing class using ``label_hierarchy`` filter
+        and adds any non-duplicate, non-test-source labels to the train/val pool.
+
+        When ``max_labels`` is set, caps enrichment at ``max_labels`` per class
+        to keep test-mode downloads fast.
+
+        Args:
+            test_labels: Labels already fetched for the test set.
+            trainval_labels: Labels already fetched for train/val.
+            filters: Base API filters (confidence, date, etc.).
+            test_source_filenames: Filenames of test source files (for exclusion).
+            test_source_paths: Full paths of test source files (for exclusion).
+
+        Returns:
+            Updated trainval_labels list with enrichment labels appended.
+
+        """
+        # Extract leaf classes from test labels
+        test_classes: set[str] = set()
+        for label in test_labels:
+            hierarchy = label.get("label_hierarchy", "")
+            leaf = extract_leaf_name(hierarchy)
+            if leaf:
+                test_classes.add(leaf)
+
+        # Extract leaf classes from train/val labels
+        trainval_classes: set[str] = set()
+        for label in trainval_labels:
+            hierarchy = label.get("label_hierarchy", "")
+            leaf = extract_leaf_name(hierarchy)
+            if leaf:
+                trainval_classes.add(leaf)
+
+        missing_classes = test_classes - trainval_classes
+
+        if not missing_classes:
+            console.print(f"\n[green]All {len(test_classes)} test classes already present in train/val[/green]")
+            return trainval_labels
+
+        # Cap per-class enrichment to max_labels when set (keeps test mode fast)
+        per_class_limit = self.config.limits.max_labels
+        limit_msg = f", max {per_class_limit}/class" if per_class_limit else ""
+
+        console.print(
+            f"\n[cyan]Enriching train/val with {len(missing_classes)} missing test classes{limit_msg}:[/cyan]"
+        )
+        for cls in sorted(missing_classes):
+            console.print(f"  [dim]- {cls}[/dim]")
+
+        # Build a set of existing label IDs to avoid duplicates
+        existing_ids: set[str] = set()
+        for label in trainval_labels:
+            label_id = label.get("id", label.get("uuid", ""))
+            if label_id:
+                existing_ids.add(label_id)
+        for label in test_labels:
+            label_id = label.get("id", label.get("uuid", ""))
+            if label_id:
+                existing_ids.add(label_id)
+
+        total_enriched = 0
+        for cls_name in sorted(missing_classes):
+            # Build enrichment filters: keep quality filters, override label_hierarchy
+            enrichment_filters = {k: v for k, v in filters.items() if k != "label_hierarchy"}
+            enrichment_filters["label_hierarchy"] = cls_name
+
+            enrichment_count = 0
+            for label in self.api_client.fetch_all_labels(
+                batch_size=self.config.advanced.batch_size,
+                quiet=True,
+                **enrichment_filters,
+            ):
+                source_path = label.get("source_path", "")
+                source_filename = Path(source_path).name
+
+                # Skip labels from test source files
+                if source_filename in test_source_filenames or source_path in test_source_paths:
+                    continue
+
+                # Skip duplicates
+                label_id = label.get("id", label.get("uuid", ""))
+                if label_id and label_id in existing_ids:
+                    continue
+
+                trainval_labels.append(label)
+                if label_id:
+                    existing_ids.add(label_id)
+                enrichment_count += 1
+
+                if per_class_limit and enrichment_count >= per_class_limit:
+                    break
+
+            if enrichment_count > 0:
+                console.print(f"  [green]+{enrichment_count} labels for '{cls_name}'[/green]")
+            else:
+                console.print(f"  [yellow]No additional labels found for '{cls_name}'[/yellow]")
+            total_enriched += enrichment_count
+
+        console.print(
+            f"[green]Train/val after enrichment: {len(trainval_labels)} labels (+{total_enriched} enriched)[/green]"
+        )
+        return trainval_labels
+
+        console.print(f"\n[cyan]Enriching train/val with {len(missing_classes)} missing test classes:[/cyan]")
+        for cls in sorted(missing_classes):
+            console.print(f"  [dim]- {cls}[/dim]")
+
+        # Build a set of existing label IDs to avoid duplicates
+        existing_ids: set[str] = set()
+        for label in trainval_labels:
+            label_id = label.get("id", label.get("uuid", ""))
+            if label_id:
+                existing_ids.add(label_id)
+        for label in test_labels:
+            label_id = label.get("id", label.get("uuid", ""))
+            if label_id:
+                existing_ids.add(label_id)
+
+        total_enriched = 0
+        for cls_name in sorted(missing_classes):
+            # Build enrichment filters: keep quality filters, override label_hierarchy
+            enrichment_filters = {k: v for k, v in filters.items() if k != "label_hierarchy"}
+            enrichment_filters["label_hierarchy"] = cls_name
+
+            enrichment_count = 0
+            for label in self.api_client.fetch_all_labels(
+                batch_size=self.config.advanced.batch_size,
+                quiet=True,
+                **enrichment_filters,
+            ):
+                source_path = label.get("source_path", "")
+                source_filename = Path(source_path).name
+
+                # Skip labels from test source files
+                if source_filename in test_source_filenames or source_path in test_source_paths:
+                    continue
+
+                # Skip duplicates
+                label_id = label.get("id", label.get("uuid", ""))
+                if label_id and label_id in existing_ids:
+                    continue
+
+                trainval_labels.append(label)
+                if label_id:
+                    existing_ids.add(label_id)
+                enrichment_count += 1
+
+            if enrichment_count > 0:
+                console.print(f"  [green]+{enrichment_count} labels for '{cls_name}'[/green]")
+            else:
+                console.print(f"  [yellow]No additional labels found for '{cls_name}'[/yellow]")
+            total_enriched += enrichment_count
+
+        console.print(
+            f"[green]Train/val after enrichment: {len(trainval_labels)} labels (+{total_enriched} enriched)[/green]"
+        )
+        return trainval_labels
 
     def _print_summary(
         self,

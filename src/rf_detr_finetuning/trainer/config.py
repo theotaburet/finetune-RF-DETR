@@ -154,7 +154,7 @@ class TrainerConfig:
     device: str = "auto"
     mixed_precision: bool = True
     gradient_clip_val: float = 0.1
-    accumulate_grad_batches: int = 1
+    accumulate_grad_batches: int = 4
     val_check_interval: int = 0
     log_every_n_steps: int = 50
     seed: int = 42

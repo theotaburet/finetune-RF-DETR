@@ -136,6 +136,30 @@ class ChunkBbox:
 
 
 @dataclass
+class ChunkStats:
+    """Per-chunk spectrogram statistics for AGC calibration.
+
+    Attributes:
+        spec_min: Minimum value in raw spectrogram (dB).
+        spec_max: Maximum value in raw spectrogram (dB).
+        spec_mean: Mean value in raw spectrogram (dB).
+        spec_std: Standard deviation in raw spectrogram (dB).
+        dynamic_range_db: Dynamic range (max - min) in dB.
+        saturation_ratio: Fraction of pixels at 0 or 255 after normalization.
+        padding_ratio: Fraction of chunk that is zero-padding.
+
+    """
+
+    spec_min: float = 0.0
+    spec_max: float = 0.0
+    spec_mean: float = 0.0
+    spec_std: float = 0.0
+    dynamic_range_db: float = 0.0
+    saturation_ratio: float = 0.0
+    padding_ratio: float = 0.0
+
+
+@dataclass
 class AudioChunk:
     """A chunk of audio with metadata and bboxes.
 
@@ -149,6 +173,7 @@ class AudioChunk:
         sample_rate: Sample rate used
         is_padded: Whether chunk required padding
         padding_amount_ms: Amount of padding added (ms)
+        stats: Per-chunk spectrogram statistics (optional)
 
     """
 
@@ -161,6 +186,7 @@ class AudioChunk:
     sample_rate: int = 0
     is_padded: bool = False
     padding_amount_ms: float = 0.0
+    stats: ChunkStats | None = None
 
     @property
     def duration_ms(self) -> float:

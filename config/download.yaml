@@ -57,6 +57,10 @@ split:
   # When true, tries to balance classes in validation set
   stratify_val: true
 
+  # Enrich train/val with classes found in test but missing from train/val
+  # When true, queries the API for additional labels of missing classes
+  match_test_classes: true
+
 # Filtering Options
 filters:
   # Comma-separated list of source names (null = all sources)

@@ -77,7 +77,10 @@ class RFDETRConfig:
         pretrained_weights: Path to pretrained weights or 'coco'.
         num_classes: Number of object classes (excluding background). Used for logging
             and metadata; rfdetr auto-detects this from the dataset at training time.
-        image_size: Input image size (square).
+        image_size: Input image size used for spectrogram generation. NOT passed to
+            RF-DETR training — each model variant uses its own default resolution
+            (e.g. 560 for base, 384 for nano) to satisfy backbone divisibility
+            constraints. RF-DETR's transforms resize input images accordingly.
 
     """
 
@@ -172,7 +175,14 @@ class RFDETRTrainer:
         output_dir = Path(output_dir or self.trainer_config.checkpoint.save_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Prepare training arguments
+        # Prepare training arguments.
+        # Keys must match rfdetr.config.TrainConfig fields and rfdetr.main.populate_args
+        # parameters — mismatched names are silently dropped by Pydantic.
+        # NOTE: We intentionally do NOT pass "resolution" here. Each RF-DETR model
+        # variant has a default resolution that satisfies its backbone's divisibility
+        # constraint (e.g. base=560 for patch_size=14, num_windows=4 → block_size=56).
+        # Passing resolution=640 would crash the base model (640 % 56 != 0).
+        # RF-DETR's transforms resize our input images to the model's native resolution.
         train_args = {
             "dataset_dir": str(dataset_path),
             "coco_path": str(dataset_path),
@@ -183,8 +193,7 @@ class RFDETRTrainer:
             "output_dir": str(output_dir),
             "device": self.trainer_config.device,
             "seed": self.trainer_config.seed,
-            "workers": self.trainer_config.num_workers,
-            "image_size": self.model_config.image_size,
+            "num_workers": self.trainer_config.num_workers,
         }
 
         # Override with user kwargs

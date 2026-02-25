@@ -110,28 +110,21 @@ def spectrogram_to_image_array(
     spec: np.ndarray,
     normalize: bool = True,
 ) -> np.ndarray:
-    """Convert spectrogram to image array (0-255, uint8).
+    """Convert spectrogram to RGB colored image array (0-255, uint8).
 
     Args:
         spec: Spectrogram array (H, W)
         normalize: Whether to normalize to 0-255 range
 
     Returns:
-        Image array (H, W) as uint8
+        RGB Image array (H, W, 3) as uint8
 
     """
-    if normalize:
-        spec_min = spec.min()
-        spec_max = spec.max()
-        if spec_max > spec_min:
-            spec = (spec - spec_min) / (spec_max - spec_min)
-        else:
-            spec = np.zeros_like(spec)
-        spec = (spec * 255).astype(np.uint8)
-    else:
-        spec = np.clip(spec, 0, 255).astype(np.uint8)
+    import torch
+    from ezakodio.viz import spectrogram_to_image
 
-    return spec
+    spec_t = torch.from_numpy(spec.copy())
+    return spectrogram_to_image(spec_t, cmap="jet", normalize=normalize)
 
 
 def normalize_to_range(

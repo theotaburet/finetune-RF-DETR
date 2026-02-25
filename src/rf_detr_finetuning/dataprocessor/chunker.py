@@ -21,6 +21,7 @@ import numpy as np
 from rf_detr_finetuning.dataprocessor.chunking import (
     AudioChunk,
     ChunkConfig,
+    ChunkStats,
     TimeBasedFFTConfig,
     align_bbox_to_chunk,
     compute_chunk_boundaries,
@@ -104,6 +105,7 @@ class AudioChunker:
         self.fmin = fmin
         self.fmax = fmax
         self.preprocessing_config = preprocessing_config
+        self.last_preprocess_metadata: dict | None = None
 
     def _compute_spectrogram(
         self,
@@ -191,6 +193,17 @@ class AudioChunker:
             else:
                 spec_img = spectrogram_to_image_array(spec)
 
+            # Compute per-chunk stats from raw spectrogram (before normalization)
+            chunk_stats = ChunkStats(
+                spec_min=float(np.min(spec)),
+                spec_max=float(np.max(spec)),
+                spec_mean=float(np.mean(spec)),
+                spec_std=float(np.std(spec)),
+                dynamic_range_db=float(np.max(spec) - np.min(spec)),
+                saturation_ratio=float(np.mean((spec_img == 0) | (spec_img == 255))),
+                padding_ratio=padding_ms / (end_ms - start_ms) if (end_ms - start_ms) > 0 else 0.0,
+            )
+
             orig_height, orig_width = spec_img.shape[:2]
             target_w = self.chunk_config.target_width or orig_width
             target_h = self.chunk_config.target_height or orig_height
@@ -235,6 +248,7 @@ class AudioChunker:
                 sample_rate=sample_rate,
                 is_padded=is_padded,
                 padding_amount_ms=padding_ms,
+                stats=chunk_stats,
             )
             chunks.append(chunk)
 
@@ -271,7 +285,10 @@ class AudioChunker:
         # Apply preprocessing to FULL audio file (not per-chunk)
         if self.preprocessing_config is not None:
             audio, preprocess_metadata = preprocess_audio(audio, sample_rate, self.preprocessing_config)
+            self.last_preprocess_metadata = preprocess_metadata
             logger.debug(f"Preprocessed {audio_path.name}: gain={preprocess_metadata.get('gain_applied_db', 0):.2f}dB")
+        else:
+            self.last_preprocess_metadata = None
 
         events = []
         source_uuid = audio_path.stem

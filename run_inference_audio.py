@@ -449,9 +449,15 @@ class AudioInferencePipeline:
         # Run inference on each chunk
         window_predictions = []
         for chunk in chunks:
+            if chunk.spectrogram is None:
+                continue
+
             # Convert spectrogram to RGB image
             normalized = normalize_to_range(chunk.spectrogram, 0, 255)
-            rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+            if normalized.ndim == 2:
+                rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+            else:
+                rgb = normalized.astype(np.uint8)
 
             # Run detection
             result = self.predictor.predict(rgb, self.confidence_threshold)
@@ -524,9 +530,15 @@ class AudioInferencePipeline:
 
         results = []
         for chunk in chunks:
+            if chunk.spectrogram is None:
+                continue
+
             # Convert and detect
             normalized = normalize_to_range(chunk.spectrogram, 0, 255)
-            rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+            if normalized.ndim == 2:
+                rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+            else:
+                rgb = normalized.astype(np.uint8)
             result = self.predictor.predict(rgb, self.confidence_threshold)
 
             metadata = {

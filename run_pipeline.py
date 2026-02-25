@@ -900,6 +900,7 @@ class PreprocessStep(PipelineStep):
                 load_chunking_config_from_yaml,
                 normalize_to_range,
             )
+            from rf_detr_finetuning.dataprocessor.visualization import draw_bboxes_on_spectrogram
 
             # Load chunker config
             fft_config, chunk_config, preproc_config = load_chunking_config_from_yaml(Path(cfg.chunking_config))
@@ -916,6 +917,13 @@ class PreprocessStep(PipelineStep):
             output_dir = Path(cfg.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
             (output_dir / "images").mkdir(exist_ok=True)
+
+            # Set up debug visualization output
+            debug_dir = None
+            if cfg.debug_visualize:
+                debug_dir = output_dir / "debug_viz"
+                debug_dir.mkdir(exist_ok=True)
+                console.print("  [cyan]Debug visualization enabled[/cyan] → saving to debug_viz/")
 
             # Find audio files (recursive or not)
             audio_files = []
@@ -962,6 +970,8 @@ class PreprocessStep(PipelineStep):
             annotation_id = 0
             skipped_no_metadata = 0
             processed_files = 0
+            all_chunk_stats = []
+            all_preprocess_metadata = []
 
             with create_file_progress() as progress:
                 task = progress.add_task(
@@ -995,21 +1005,44 @@ class PreprocessStep(PipelineStep):
                             metadata_path=metadata_path,
                         )
                         processed_files += 1
+
+                        # Collect preprocessing metadata for stats summary
+                        if chunker.last_preprocess_metadata:
+                            all_preprocess_metadata.append(chunker.last_preprocess_metadata)
                     except Exception as e:
                         logger.warning(f"Failed to process {audio_path.name}: {e}")
                         progress.advance(task)
                         continue
 
                     for chunk in chunks:
+                        # Collect chunk stats
+                        if chunk.stats is not None:
+                            all_chunk_stats.append(chunk.stats)
+
+                        if chunk.spectrogram is None:
+                            continue
+
                         # Save image
                         normalized = normalize_to_range(chunk.spectrogram, 0, 255)
-                        rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+                        if normalized.ndim == 2:
+                            rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+                        else:
+                            rgb = normalized.astype(np.uint8)
                         img_name = f"{audio_path.stem}_chunk{chunk.chunk_index:04d}.png"
                         img_path = output_dir / "images" / img_name
                         Image.fromarray(rgb).save(img_path)
 
+                        # Save debug visualization with GT bboxes overlaid
+                        if debug_dir and chunk.bboxes:
+                            debug_path = debug_dir / img_name
+                            draw_bboxes_on_spectrogram(
+                                spectrogram=rgb,
+                                bboxes=chunk.bboxes,
+                                output_path=debug_path,
+                            )
+
                         # Add image entry
-                        h, w = chunk.spectrogram.shape
+                        h, w = chunk.spectrogram.shape[:2]
                         all_images.append(
                             {
                                 "id": image_id,
@@ -1019,11 +1052,14 @@ class PreprocessStep(PipelineStep):
                             }
                         )
 
-                        # Add annotations (1-based IDs per COCO convention)
+                        # Add annotations (0-based IDs for Roboflow/RF-DETR convention).
+                        # RF-DETR's _load_classes computes num_classes = len(class_names) + 1
+                        # so 0-based IDs ensure no wasted logit channel and that
+                        # category IDs are valid indices into the model's output.
                         for bbox in chunk.bboxes:
                             label = bbox.category or "unknown"
                             if label not in class_to_id:
-                                class_to_id[label] = len(class_to_id) + 1
+                                class_to_id[label] = len(class_to_id)
 
                             all_annotations.append(
                                 {
@@ -1043,6 +1079,59 @@ class PreprocessStep(PipelineStep):
 
                 # Final update
                 progress.update(task, description=f"[green]Completed {processed_files} files")
+
+            # Log chunk stats summary for AGC calibration
+            if all_chunk_stats:
+                spec_mins = [s.spec_min for s in all_chunk_stats]
+                spec_maxs = [s.spec_max for s in all_chunk_stats]
+                spec_means = [s.spec_mean for s in all_chunk_stats]
+                spec_stds = [s.spec_std for s in all_chunk_stats]
+                dynamic_ranges = [s.dynamic_range_db for s in all_chunk_stats]
+                sat_ratios = [s.saturation_ratio for s in all_chunk_stats]
+                pad_ratios = [s.padding_ratio for s in all_chunk_stats]
+                padded_chunks = sum(1 for s in all_chunk_stats if s.padding_ratio > 0)
+
+                console.print("\n  [bold]Chunk Spectrogram Stats[/bold] (for AGC calibration):")
+                console.print(
+                    f"    Spectrogram dB range: "
+                    f"min={np.min(spec_mins):.1f}, max={np.max(spec_maxs):.1f}, "
+                    f"mean={np.mean(spec_means):.1f} ± {np.mean(spec_stds):.1f}"
+                )
+                console.print(
+                    f"    Dynamic range: "
+                    f"mean={np.mean(dynamic_ranges):.1f}dB, "
+                    f"min={np.min(dynamic_ranges):.1f}dB, "
+                    f"max={np.max(dynamic_ranges):.1f}dB"
+                )
+                console.print(f"    Saturation ratio: mean={np.mean(sat_ratios):.3f}, max={np.max(sat_ratios):.3f}")
+                if padded_chunks > 0:
+                    console.print(
+                        f"    Padded chunks: {padded_chunks}/{len(all_chunk_stats)} "
+                        f"(mean pad ratio={np.mean(pad_ratios):.3f})"
+                    )
+
+            # Log preprocessing (AGC) summary
+            if all_preprocess_metadata:
+                original_dbs = [m["original_rms_db"] for m in all_preprocess_metadata]
+                final_dbs = [m["final_rms_db"] for m in all_preprocess_metadata]
+                gains = [m["gain_applied_db"] for m in all_preprocess_metadata]
+                agc_applied = sum(1 for m in all_preprocess_metadata if m.get("agc_applied"))
+
+                console.print("\n  [bold]AGC Preprocessing Stats[/bold]:")
+                console.print(
+                    f"    Original RMS: "
+                    f"mean={np.mean(original_dbs):.1f}dB, "
+                    f"range=[{np.min(original_dbs):.1f}, {np.max(original_dbs):.1f}]dB"
+                )
+                console.print(
+                    f"    Final RMS: "
+                    f"mean={np.mean(final_dbs):.1f}dB, "
+                    f"range=[{np.min(final_dbs):.1f}, {np.max(final_dbs):.1f}]dB"
+                )
+                console.print(
+                    f"    Gain applied: mean={np.mean(gains):.1f}dB, range=[{np.min(gains):.1f}, {np.max(gains):.1f}]dB"
+                )
+                console.print(f"    AGC applied to {agc_applied}/{len(all_preprocess_metadata)} files")
 
             # Build categories (with supercategory - must NOT be "none" for RF-DETR)
             categories = [
@@ -1255,6 +1344,58 @@ class SplitStep(PipelineStep):
                 if unmatched > 0:
                     console.print(
                         f"  [yellow]![/yellow] {unmatched} images could not be mapped to a split, defaulting to train"
+                    )
+
+                # Rebalance valid set if it's too small for meaningful evaluation.
+                # The download step splits at the audio-file level, which can produce
+                # very few valid images if few short audio files are assigned to valid.
+                # We fix this by moving entire audio stems from train to valid,
+                # preserving audio-level split integrity (no data leakage).
+                split_counts = {"train": 0, "valid": 0, "test": 0}
+                for split in image_split_map.values():
+                    split_counts[split] = split_counts.get(split, 0) + 1
+
+                non_test_total = split_counts["train"] + split_counts["valid"]
+                target_valid = max(int(non_test_total * cfg.val_ratio), 100)
+
+                if split_counts["valid"] < target_valid and split_counts["train"] > target_valid:
+                    console.print(
+                        f"  [yellow]![/yellow] Valid set too small ({split_counts['valid']} images, "
+                        f"need ~{target_valid}). Rebalancing from train..."
+                    )
+
+                    # Group train images by audio stem
+                    stem_to_train_indices: dict[str, list[int]] = {}
+                    for i, split in image_split_map.items():
+                        if split == "train":
+                            img_name = Path(coco_data["images"][i]["file_name"]).name
+                            match = chunk_pattern.match(img_name)
+                            if match:
+                                stem = match.group(1)
+                                stem_to_train_indices.setdefault(stem, []).append(i)
+
+                    # Shuffle stems deterministically, then move to valid until target is reached
+                    stems = list(stem_to_train_indices.keys())
+                    rng = np.random.default_rng(cfg.seed)
+                    rng.shuffle(stems)
+
+                    moved_images = 0
+                    moved_stems = 0
+                    for stem in stems:
+                        if split_counts["valid"] >= target_valid:
+                            break
+                        indices = stem_to_train_indices[stem]
+                        for idx in indices:
+                            image_split_map[idx] = "valid"
+                        split_counts["valid"] += len(indices)
+                        split_counts["train"] -= len(indices)
+                        moved_images += len(indices)
+                        moved_stems += 1
+
+                    console.print(
+                        f"  [green]✓[/green] Rebalanced: moved {moved_stems} audio stems "
+                        f"({moved_images} images) from train to valid. "
+                        f"New sizes: train={split_counts['train']}, valid={split_counts['valid']}"
                     )
 
                 # Assign images and annotations using the mapping
@@ -1556,6 +1697,8 @@ class EvaluateStep(PipelineStep):
             import numpy as np
             from PIL import Image
 
+            from rf_detr_finetuning.dataprocessor.chunking import ChunkBbox
+            from rf_detr_finetuning.dataprocessor.visualization import draw_gt_and_predictions_on_spectrogram
             from rf_detr_finetuning.predictor import RFDETRPredictor
             from rf_detr_finetuning.trainer import compute_coco_metrics
 
@@ -1570,6 +1713,7 @@ class EvaluateStep(PipelineStep):
             class_names = [c["name"] for c in sorted_categories]
             idx_to_category_id = {idx: c["id"] for idx, c in enumerate(sorted_categories)}
             valid_category_ids = {c["id"] for c in sorted_categories}
+            id_to_class_name = {c["id"]: c["name"] for c in sorted_categories}
 
             # Initialize predictor
             predictor = RFDETRPredictor(
@@ -1594,6 +1738,13 @@ class EvaluateStep(PipelineStep):
             output_dir.mkdir(parents=True, exist_ok=True)
 
             console.print(f"  Running inference on {len(coco_data['images'])} test images...")
+
+            # Set up visualization output
+            viz_dir = None
+            if cfg.save_visualizations:
+                viz_dir = output_dir / "visualizations"
+                viz_dir.mkdir(exist_ok=True)
+                console.print(f"  Saving visualizations → {viz_dir}/")
 
             with create_file_progress() as progress:
                 task = progress.add_task(
@@ -1633,6 +1784,35 @@ class EvaluateStep(PipelineStep):
                     # Store ground truth
                     for ann in img_to_anns.get(img_info["id"], []):
                         ground_truths.append(ann)
+
+                    # Save visualization with GT (green) and predictions (red)
+                    if viz_dir:
+                        gt_bboxes_for_viz = []
+                        for ann in img_to_anns.get(img_info["id"], []):
+                            bx, by, bw, bh = ann["bbox"]
+                            gt_bboxes_for_viz.append(
+                                ChunkBbox(
+                                    x=bx,
+                                    y=by,
+                                    width=bw,
+                                    height=bh,
+                                    category=id_to_class_name.get(ann["category_id"], ""),
+                                    category_id=ann["category_id"],
+                                    original_time_start_ms=0,
+                                    original_time_end_ms=0,
+                                    hz_min=0,
+                                    hz_max=0,
+                                    overlap_ratio=1.0,
+                                )
+                            )
+                        viz_path = viz_dir / Path(img_info["file_name"]).name
+                        draw_gt_and_predictions_on_spectrogram(
+                            spectrogram=img,
+                            gt_bboxes=gt_bboxes_for_viz,
+                            predictions=result.detections,
+                            output_path=viz_path,
+                            class_names=id_to_class_name,
+                        )
 
                     progress.advance(task)
 

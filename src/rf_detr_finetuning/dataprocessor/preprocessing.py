@@ -336,28 +336,23 @@ def normalize_spectrogram(
     spectrogram: np.ndarray,
     config: DynamicRangeConfig | None = None,
 ) -> np.ndarray:
-    """Normalize spectrogram to 0-255 range with dynamic range control.
+    """Normalize spectrogram to RGB colored jet image (0-255 range) with dynamic range control.
 
     Args:
         spectrogram: Spectrogram array (H, W)
         config: Dynamic range configuration
 
     Returns:
-        Normalized spectrogram as uint8 (0-255)
+        RGB image array (H, W, 3) as uint8
 
     """
+    import torch
+    from ezakodio.viz import spectrogram_to_image
+
     spec = apply_dynamic_range_compression(spectrogram, config)
 
-    # Min-max normalization to 0-255
-    spec_min = spec.min()
-    spec_max = spec.max()
-
-    if spec_max > spec_min:
-        spec = (spec - spec_min) / (spec_max - spec_min)
-    else:
-        spec = np.zeros_like(spec)
-
-    return (spec * 255).astype(np.uint8)
+    spec_t = torch.from_numpy(spec.copy())
+    return spectrogram_to_image(spec_t, cmap="jet", normalize=True)
 
 
 class AudioPreprocessor:
