@@ -6,15 +6,19 @@ All audio loading MUST use ezakodio.io.load_audio.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
+import soundfile as sf
 import torch
 from ezakodio.io import load_audio
 
 if TYPE_CHECKING:
     pass
+
+logger = logging.getLogger(__name__)
 
 
 def load_audio_file(
@@ -104,7 +108,10 @@ def load_audio_segment(
 
 
 def get_audio_duration_ms(audio_path: Path | str) -> float:
-    """Get audio file duration in milliseconds without loading full file.
+    """Get audio file duration in milliseconds from file header.
+
+    Uses soundfile to read metadata without loading the full audio data,
+    which is significantly faster for large files.
 
     Args:
         audio_path: Path to audio file
@@ -113,6 +120,58 @@ def get_audio_duration_ms(audio_path: Path | str) -> float:
         Duration in milliseconds
 
     """
-    # For now, load and compute - ezakodio may have metadata reading
-    audio, sample_rate = load_audio_file(audio_path)
-    return (len(audio) / sample_rate) * 1000
+    info = sf.info(str(audio_path))
+    return (info.frames / info.samplerate) * 1000
+
+
+def filter_audio_by_duration(
+    audio_files: list[Path],
+    max_duration_s: float | None,
+) -> list[Path]:
+    """Filter audio files by maximum duration.
+
+    Reads file headers (no full load) to determine duration and excludes
+    files exceeding the threshold. Useful for fast iteration during testing.
+
+    Args:
+        audio_files: List of audio file paths.
+        max_duration_s: Maximum allowed duration in seconds. None disables filtering.
+
+    Returns:
+        Filtered list of audio files that are within the duration limit.
+
+    """
+    if max_duration_s is None:
+        return audio_files
+
+    max_duration_ms = max_duration_s * 1000
+    filtered = []
+    skipped = 0
+
+    for path in audio_files:
+        try:
+            duration_ms = get_audio_duration_ms(path)
+            if duration_ms <= max_duration_ms:
+                filtered.append(path)
+            else:
+                skipped += 1
+                logger.debug(
+                    "Skipping %s (%.1fs > %.1fs max)",
+                    path.name,
+                    duration_ms / 1000,
+                    max_duration_s,
+                )
+        except Exception:
+            logger.warning("Could not read duration for %s, keeping file", path.name)
+            filtered.append(path)
+
+    if skipped > 0:
+        logger.info(
+            "Duration filter: kept %d / %d files (skipped %d > %.0fs)",
+            len(filtered),
+            len(audio_files),
+            skipped,
+            max_duration_s,
+        )
+
+    return filtered

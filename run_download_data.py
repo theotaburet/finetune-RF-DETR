@@ -1056,30 +1056,61 @@ def split_sounds_into_datasets(
         if missing_files:
             console.print(f"  [yellow]Warning: Could not find: {missing_files}[/yellow]")
     else:
-        # Shuffle sounds for random selection
-        sound_indices = np.arange(len(sounds))
-        rng.shuffle(sound_indices)
+        # Split at the source-file level to prevent data leakage.
+        # Sounds from the same source file must stay in the same split.
+        source_to_indices: dict[str, list[int]] = {}
+        for i, sound in enumerate(sounds):
+            source_to_indices.setdefault(sound.source_file, []).append(i)
 
-        # Reserve test sounds - but also exclude all other sounds sharing the same
-        # source files to prevent leakage (a source file may have many sound segments)
-        test_count = min(config.test_files, len(sounds))
-        initial_test_indices = set(sound_indices[:test_count].tolist())
-        test_source_files = {sounds[i].source_file for i in initial_test_indices}
+        all_sources = list(source_to_indices.keys())
+        rng.shuffle(all_sources)
 
-        test_indices = set()
-        remaining_indices_list = []
-        for i in sound_indices:
-            if sounds[i].source_file in test_source_files:
-                test_indices.add(i)
-            else:
-                remaining_indices_list.append(i)
+        n_sources = len(all_sources)
+        if n_sources < 2:
+            # Cannot split a single source file — put everything in train
+            console.print(
+                f"  [yellow]Warning: Only {n_sources} source file(s) found, "
+                "cannot create test split. All sounds go to train/val.[/yellow]"
+            )
+            test_indices = set()
+            remaining_indices = np.arange(len(sounds))
+        else:
+            # Pick test source files: use test_files as a *sound* count hint,
+            # but cap so we never take more than half the source files.
+            max_test_sources = max(1, n_sources // 2)
+            target_test_sounds = min(config.test_files, len(sounds))
 
-        remaining_indices = np.array(remaining_indices_list)
+            test_source_files: set[str] = set()
+            test_sound_count = 0
+            for src in all_sources:
+                if len(test_source_files) >= max_test_sources:
+                    break
+                if test_sound_count >= target_test_sounds:
+                    break
+                test_source_files.add(src)
+                test_sound_count += len(source_to_indices[src])
 
-        console.print(
-            f"  Test set: {len(test_indices)} sounds from {len(test_source_files)} source file(s) "
-            f"(requested {test_count}, expanded to avoid leakage)"
-        )
+            # Ensure at least one source file is NOT in test
+            if test_source_files == set(all_sources) and n_sources > 1:
+                # Remove the source with the most sounds to preserve train data
+                largest_src = max(test_source_files, key=lambda s: len(source_to_indices[s]))
+                test_source_files.discard(largest_src)
+
+            test_indices = set()
+            remaining_indices_list = []
+            for i in range(len(sounds)):
+                if sounds[i].source_file in test_source_files:
+                    test_indices.add(i)
+                else:
+                    remaining_indices_list.append(i)
+
+            remaining_indices = np.array(remaining_indices_list) if remaining_indices_list else np.array([], dtype=int)
+
+            console.print(
+                f"  Test set: {len(test_indices)} sounds from {len(test_source_files)} / "
+                f"{n_sources} source file(s) "
+                f"(target {target_test_sounds} sounds, capped at {max_test_sources} source files)"
+            )
 
     # Split remaining into train/val
     if len(remaining_indices) > 0:
@@ -1258,15 +1289,34 @@ class DataDownloader:
             self._create_output_directories()
 
     def _create_output_directories(self) -> None:
-        """Create output directory structure."""
+        """Create output directory structure.
+
+        When splitting is enabled, existing audio (.wav) and sidecar (.json) files are removed from split directories
+        before re-creating them. This prevents stale files from a previous run persisting in the wrong split and causing
+        file overlap between train/valid/test.
+
+        """
         base_dir = Path(self.config.output.dir)
         base_dir.mkdir(parents=True, exist_ok=True)
 
         if self.config.split.enabled:
-            # Create split directories
-            (base_dir / self.config.output.train_dir).mkdir(exist_ok=True)
-            (base_dir / self.config.output.val_dir).mkdir(exist_ok=True)
-            (base_dir / self.config.output.test_dir).mkdir(exist_ok=True)
+            split_dirs = [
+                base_dir / self.config.output.train_dir,
+                base_dir / self.config.output.val_dir,
+                base_dir / self.config.output.test_dir,
+            ]
+            stale_exts = {".wav", ".json"}
+            for split_dir in split_dirs:
+                if split_dir.exists():
+                    # Remove stale audio and sidecar files from previous runs
+                    removed = 0
+                    for f in split_dir.iterdir():
+                        if f.suffix.lower() in stale_exts:
+                            f.unlink()
+                            removed += 1
+                    if removed:
+                        logger.info(f"Cleaned {removed} stale files from {split_dir}")
+                split_dir.mkdir(exist_ok=True)
         else:
             # Create single audio directory
             (base_dir / "audio").mkdir(exist_ok=True)

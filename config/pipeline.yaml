@@ -5,7 +5,7 @@ description: RF-DETR Audio Event Detection Pipeline
 download:
   enabled: true
   config_file: config/download.yaml
-  max_labels: null  # Use limit from download.yaml (1000)
+  max_labels: 100  # Use limit from download.yaml (1000)
   force: false
 
 # Class names - ORDER MATTERS! Index = Class ID (0-based)
@@ -20,8 +20,12 @@ class_names: ["mysticeti"]
 classes_file: null
 preprocess:
   enabled: true
-  audio_dir: data/downloaded
-  metadata_dir: data/downloaded
+
+  audio_dir: /mnt/d/SoundBase/Sounds/SDK_test
+  metadata_dir: /mnt/d/SoundBase/Sounds/SDK_test
+
+  # audio_dir: data/downloaded
+  # metadata_dir: data/downloaded
   output_dir: data/processed
   chunking_config: config/chunking.yaml
   extensions:
@@ -30,7 +34,8 @@ preprocess:
   - .mp3
   recursive: true
   debug_visualize: false
-  max_files: null  # Process all files (set to number for testing)
+  max_files: 100  # Process all files (set to number for testing)
+  max_duration_s: 60  # Skip files longer than this (seconds, null = no limit)
 split:
   enabled: true
   input_dir: data/processed
@@ -74,6 +79,7 @@ optimize_merging:
   iou_threshold: 0.3
   per_class: false  # Per-class optimization (slower but more accurate)
   max_files: null  # Limit test files (null = all)
+  max_duration_s: null  # Skip files longer than this (seconds, null = no limit)
   delta_time_values: [200, 500, 1000, 2000, 4000, 8000]
   delta_freq_values: [50, 100, 200, 500]
   score_threshold_values: [0.1, 0.2, 0.3, 0.5]
@@ -91,4 +97,5 @@ infer:
   recursive: true
   confidence_threshold: 0.5
   merge_gap_ms: 100.0
+  max_duration_s: null  # Skip files longer than this (seconds, null = no limit)
   output_format: json

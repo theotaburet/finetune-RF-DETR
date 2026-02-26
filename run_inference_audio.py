@@ -205,6 +205,11 @@ def parse_args() -> argparse.Namespace:
         type=int,
         help="Maximum number of files to process",
     )
+    debug_group.add_argument(
+        "--max-duration",
+        type=float,
+        help="Skip audio files longer than this duration in seconds (for testing)",
+    )
 
     return parser.parse_args()
 
@@ -714,6 +719,18 @@ def main() -> int:
 
     if args.max_files:
         audio_files = audio_files[: args.max_files]
+
+    # Filter by duration (reads file headers only, no full load)
+    if args.max_duration:
+        from rf_detr_finetuning.dataprocessor.io import filter_audio_by_duration
+
+        before_count = len(audio_files)
+        audio_files = filter_audio_by_duration(audio_files, args.max_duration)
+        if len(audio_files) < before_count:
+            console.print(
+                f"[yellow]Duration filter ({args.max_duration}s):[/yellow] "
+                f"kept {len(audio_files)} / {before_count} files"
+            )
 
     console.print(f"[green]Processing {len(audio_files)} audio file(s)[/green]\n")
 

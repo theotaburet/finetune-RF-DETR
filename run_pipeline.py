@@ -83,6 +83,7 @@ class PreprocessConfig:
     recursive: bool = True  # Search subdirectories for audio files
     debug_visualize: bool = False
     max_files: int | None = None
+    max_duration_s: float | None = None  # Skip files longer than this (seconds)
 
 
 @dataclass
@@ -159,6 +160,7 @@ class OptimizeMergingConfig:
     iou_threshold: float = 0.3
     per_class: bool = False
     max_files: int | None = None
+    max_duration_s: float | None = None  # Skip files longer than this (seconds)
     delta_time_values: list[float] = field(default_factory=lambda: [200, 500, 1000, 2000, 4000, 8000])
     delta_freq_values: list[float] = field(default_factory=lambda: [50, 100, 200, 500])
     score_threshold_values: list[float] = field(default_factory=lambda: [0.1, 0.2, 0.3, 0.5])
@@ -178,6 +180,7 @@ class InferConfig:
     recursive: bool = True  # Search subdirectories for audio files
     confidence_threshold: float = 0.5
     merge_gap_ms: float = 100.0
+    max_duration_s: float | None = None  # Skip files longer than this (seconds)
     output_format: str = "json"  # json, csv, raven
 
 
@@ -938,6 +941,17 @@ class PreprocessStep(PipelineStep):
             if cfg.max_files:
                 audio_files = audio_files[: cfg.max_files]
 
+            # Filter by duration (reads file headers only, no full load)
+            if cfg.max_duration_s:
+                from rf_detr_finetuning.dataprocessor.io import filter_audio_by_duration
+
+                before_count = len(audio_files)
+                audio_files = filter_audio_by_duration(audio_files, cfg.max_duration_s)
+                if len(audio_files) < before_count:
+                    console.print(
+                        f"  Duration filter ({cfg.max_duration_s}s): kept {len(audio_files)} / {before_count} files"
+                    )
+
             # Check if preprocessing output already exists and is complete
             coco_path = output_dir / "_annotations.coco.json"
             if coco_path.exists() and not self.force:
@@ -1316,14 +1330,43 @@ class SplitStep(PipelineStep):
             if has_presplit:
                 console.print("  Detected pre-existing splits from download step")
                 # Build mapping: audio_stem -> split_name
-                stem_to_split = {}
+                # Priority: train > valid > test — if a stem exists in multiple
+                # directories (stale files from a previous run), the earlier
+                # split wins so that training data is not silently lost.
+                split_priority = {"train": 0, "valid": 1, "test": 2}
+                stem_to_split: dict[str, str] = {}
+                overlap_stems: dict[str, list[str]] = {}  # stem -> list of split names
                 audio_exts = {".wav", ".flac", ".mp3"}
                 for split_name, split_path in split_dirs.items():
                     if not split_path.exists():
                         continue
                     for f in split_path.iterdir():
                         if f.suffix.lower() in audio_exts:
-                            stem_to_split[f.stem] = split_name
+                            stem = f.stem
+                            if stem in stem_to_split:
+                                # Track the overlap
+                                overlap_stems.setdefault(stem, [stem_to_split[stem]]).append(split_name)
+                                # Keep the higher-priority (lower number) split
+                                existing = stem_to_split[stem]
+                                if split_priority[split_name] < split_priority[existing]:
+                                    stem_to_split[stem] = split_name
+                            else:
+                                stem_to_split[stem] = split_name
+
+                if overlap_stems:
+                    console.print(
+                        f"  [yellow]WARNING: {len(overlap_stems)} audio stems exist in multiple "
+                        f"split directories (stale files from a previous run?).[/yellow]"
+                    )
+                    console.print(
+                        "  [yellow]Using priority train > valid > test. "
+                        "Consider deleting data/downloaded/ and re-running the download step.[/yellow]"
+                    )
+                    # Log first few for debugging
+                    for stem in list(overlap_stems)[:5]:
+                        dirs = overlap_stems[stem]
+                        chosen = stem_to_split[stem]
+                        console.print(f"    [dim]{stem}: found in {dirs}, using {chosen}[/dim]")
 
                 # Map chunk images to splits using audio stem
                 # Image names follow pattern: {audio_stem}_chunk{NNNN}.png
@@ -1351,6 +1394,28 @@ class SplitStep(PipelineStep):
                     console.print(
                         f"  [yellow]![/yellow] {unmatched} images could not be mapped to a split, defaulting to train"
                     )
+
+                # Validate that the pre-existing splits are not degenerate
+                split_counts_check = {"train": 0, "valid": 0, "test": 0}
+                for split in image_split_map.values():
+                    split_counts_check[split] = split_counts_check.get(split, 0) + 1
+
+                if split_counts_check["train"] == 0 and split_counts_check["valid"] == 0:
+                    total = len(image_split_map)
+                    console.print(
+                        f"  [red]ERROR: Pre-existing splits are degenerate![/red] "
+                        f"All {total} images mapped to test, 0 in train/val."
+                    )
+                    console.print(
+                        "  [yellow]This usually means the download step's anti-leakage logic "
+                        "assigned all source files to the test set.[/yellow]"
+                    )
+                    console.print(
+                        "  [yellow]Fix: re-run the download step (delete data/downloaded) "
+                        "or reduce split.test_files in config/download.yaml.[/yellow]"
+                    )
+                    self.results = {"error": "degenerate_split", "train": 0, "val": 0, "test": total}
+                    return False
 
                 # Rebalance valid set to be class-balanced using audio stems.
                 # We move entire audio stems from train to valid to avoid leakage,
@@ -2001,6 +2066,19 @@ class OptimizeMergingStep(PipelineStep):
             if cfg.max_files:
                 test_sounds = test_sounds[: cfg.max_files]
 
+            # Filter by duration (reads file headers only, no full load)
+            if cfg.max_duration_s:
+                from rf_detr_finetuning.dataprocessor.io import filter_audio_by_duration
+
+                all_paths = [s["audio_path"] for s in test_sounds]
+                kept_paths = set(filter_audio_by_duration(all_paths, cfg.max_duration_s))
+                before_count = len(test_sounds)
+                test_sounds = [s for s in test_sounds if s["audio_path"] in kept_paths]
+                if len(test_sounds) < before_count:
+                    console.print(
+                        f"  Duration filter ({cfg.max_duration_s}s): kept {len(test_sounds)} / {before_count} files"
+                    )
+
             console.print(f"  Found {len(test_sounds)} test audio files")
 
             # Resolve class names
@@ -2273,6 +2351,17 @@ class InferStep(PipelineStep):
 
             audio_files = sorted(set(audio_files))  # Remove duplicates and sort
             console.print(f"  Found {len(audio_files)} audio files")
+
+            # Filter by duration (reads file headers only, no full load)
+            if cfg.max_duration_s:
+                from rf_detr_finetuning.dataprocessor.io import filter_audio_by_duration
+
+                before_count = len(audio_files)
+                audio_files = filter_audio_by_duration(audio_files, cfg.max_duration_s)
+                if len(audio_files) < before_count:
+                    console.print(
+                        f"  Duration filter ({cfg.max_duration_s}s): kept {len(audio_files)} / {before_count} files"
+                    )
 
             output_dir = Path(cfg.output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)

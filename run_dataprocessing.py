@@ -213,6 +213,11 @@ def parse_args() -> argparse.Namespace:
         help="Maximum number of files to process (for testing)",
     )
     debug_group.add_argument(
+        "--max-duration",
+        type=float,
+        help="Skip audio files longer than this duration in seconds (for testing)",
+    )
+    debug_group.add_argument(
         "-v",
         "--verbose",
         action="store_true",
@@ -540,6 +545,19 @@ def main() -> int:
 
     if args.max_files:
         pairs = pairs[: args.max_files]
+
+    # Filter by duration (reads file headers only, no full load)
+    if args.max_duration:
+        from rf_detr_finetuning.dataprocessor.io import filter_audio_by_duration
+
+        audio_paths = [p for p, _ in pairs]
+        kept_paths = set(filter_audio_by_duration(audio_paths, args.max_duration))
+        before_count = len(pairs)
+        pairs = [(p, m) for p, m in pairs if p in kept_paths]
+        if len(pairs) < before_count:
+            console.print(
+                f"[yellow]Duration filter ({args.max_duration}s):[/yellow] kept {len(pairs)} / {before_count} files"
+            )
 
     metadata_count = sum(1 for _, m in pairs if m is not None)
     no_metadata_count = len(pairs) - metadata_count

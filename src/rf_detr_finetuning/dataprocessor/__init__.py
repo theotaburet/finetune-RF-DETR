@@ -38,7 +38,11 @@ from rf_detr_finetuning.dataprocessor.features import (
     compute_mel_spectrogram_db,
     flip_spectrogram,
 )
-from rf_detr_finetuning.dataprocessor.io import load_audio_file
+from rf_detr_finetuning.dataprocessor.io import (
+    filter_audio_by_duration,
+    get_audio_duration_ms,
+    load_audio_file,
+)
 from rf_detr_finetuning.dataprocessor.normalization import (
     grayscale_to_rgb,
     normalize_to_range,
@@ -65,6 +69,8 @@ from rf_detr_finetuning.dataprocessor.visualization import (
 __all__ = [
     # I/O
     "load_audio_file",
+    "get_audio_duration_ms",
+    "filter_audio_by_duration",
     # Features
     "compute_mel_spectrogram",
     "compute_mel_spectrogram_db",
