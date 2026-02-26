@@ -138,9 +138,9 @@ Use YAML configs with auto-computed values:
 
 ```yaml
 fft:
-  hop_ms: 10.0
+  hop_ms: 100.0
   fft_ms: 25.0
-  n_mels: 128
+  n_mels: 256
 
 chunking:
   target_size: 640  # Auto-computes width=640, height=640

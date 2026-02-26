@@ -187,9 +187,6 @@ class TrainingLogger:
 
         self._epoch_start_time: float = 0
         self._train_start_time: float = 0
-        self._progress: Progress | None = None
-        self._epoch_task = None
-        self._batch_task = None
 
     def on_train_start(self) -> None:
         """Called at start of training."""

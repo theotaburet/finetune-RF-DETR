@@ -38,6 +38,13 @@ class SplitConfig:
     test_ratio: float = 0.15
     seed: int = 42
     stratify_by: str | None = None
+    """Key to stratify by (e.g., "category", "source_file").
+
+    Note:
+        Currently informational only. Use ``get_label_fn`` in
+        :func:`create_stratified_split` to control stratification behaviour.
+
+    """
     min_samples_per_class: int = 1
 
     def __post_init__(self) -> None:

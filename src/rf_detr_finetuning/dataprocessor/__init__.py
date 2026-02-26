@@ -49,13 +49,16 @@ from rf_detr_finetuning.dataprocessor.normalization import (
 )
 from rf_detr_finetuning.dataprocessor.preprocessing import (
     AGCConfig,
+    AudioPreprocessor,
     DynamicRangeConfig,
     PreprocessingConfig,
     apply_agc,
     apply_detrend,
     apply_preemphasis,
+    compute_percentile_rms_db,
     normalize_spectrogram,
     preprocess_audio,
+    preprocess_for_inference,
 )
 from rf_detr_finetuning.dataprocessor.visualization import (
     draw_bboxes_on_spectrogram,
@@ -70,10 +73,13 @@ __all__ = [
     "flip_spectrogram",
     # Preprocessing
     "AGCConfig",
+    "AudioPreprocessor",
     "DynamicRangeConfig",
     "PreprocessingConfig",
     "preprocess_audio",
     "normalize_spectrogram",
+    "compute_percentile_rms_db",
+    "preprocess_for_inference",
     "apply_agc",
     "apply_detrend",
     "apply_preemphasis",
@@ -106,28 +112,4 @@ __all__ = [
     "mixup_audio",
     # Visualization
     "draw_bboxes_on_spectrogram",
-]
-
-__all__ = [
-    # I/O
-    "load_audio_file",
-    # Features
-    "compute_mel_spectrogram",
-    # Preprocessing
-    "AGCConfig",
-    "DynamicRangeConfig",
-    "PreprocessingConfig",
-    "preprocess_audio",
-    "normalize_spectrogram",
-    # Chunking
-    "ChunkConfig",
-    "TimeBasedFFTConfig",
-    "AudioChunk",
-    "ChunkBbox",
-    "compute_chunk_boundaries",
-    "extract_audio_chunk",
-    "align_bbox_to_chunk",
-    # Normalization
-    "spectrogram_to_image_array",
-    "resize_spectrogram",
 ]

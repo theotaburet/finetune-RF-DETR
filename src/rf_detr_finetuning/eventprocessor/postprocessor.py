@@ -13,6 +13,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+import numpy as np
+
 from rf_detr_finetuning.eventprocessor.event import AudioEvent, EventList
 from rf_detr_finetuning.eventprocessor.merger import (
     EventMerger,
@@ -32,9 +34,10 @@ class PostProcessorConfig:
 
     Attributes:
         time_per_pixel_ms: Milliseconds per pixel (from FFT hop).
-        freq_per_pixel_hz: Hz per pixel (optional, for freq conversion).
+        n_mels: Number of mel bins (for mel-to-Hz conversion).
         min_freq_hz: Minimum frequency in spectrogram.
         max_freq_hz: Maximum frequency in spectrogram.
+        use_mel_scale: Whether spectrogram uses mel-scale frequency axis.
         confidence_threshold: Minimum detection confidence.
         min_event_duration_ms: Minimum event duration to keep.
         max_event_duration_ms: Maximum event duration (None = no limit).
@@ -44,9 +47,10 @@ class PostProcessorConfig:
     """
 
     time_per_pixel_ms: float = 10.0
-    freq_per_pixel_hz: float | None = None
+    n_mels: int = 128
     min_freq_hz: float = 0.0
     max_freq_hz: float = 8000.0
+    use_mel_scale: bool = True
     confidence_threshold: float = 0.5
     min_event_duration_ms: float = 0.0
     max_event_duration_ms: float | None = None
@@ -129,6 +133,35 @@ class EventPostProcessor:
         logger.info(f"Final: {len(event_list)} events detected")
         return event_list
 
+    def _pixel_to_freq_hz(self, pixel_y: float) -> float:
+        """Convert a pixel Y-coordinate to frequency in Hz.
+
+        After flipud, y=0 is max_freq and y=n_mels is min_freq.
+        If use_mel_scale is True, converts through mel scale for accurate mapping.
+
+        Args:
+            pixel_y: Y pixel coordinate (0 = top = high freq).
+
+        Returns:
+            Frequency in Hz.
+
+        """
+        n_mels = self.config.n_mels
+        min_freq = self.config.min_freq_hz
+        max_freq = self.config.max_freq_hz
+
+        if self.config.use_mel_scale:
+            # Convert frequency bounds to mel
+            min_mel = 2595.0 * np.log10(1.0 + min_freq / 700.0)
+            max_mel = 2595.0 * np.log10(1.0 + max_freq / 700.0)
+            # Interpolate in mel space (y=0 is top = max_freq = max_mel)
+            mel = max_mel - (pixel_y / n_mels) * (max_mel - min_mel)
+            # Convert mel back to Hz
+            return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
+        else:
+            # Linear mapping
+            return max_freq - (pixel_y / n_mels) * (max_freq - min_freq)
+
     def _window_to_events(
         self,
         window: WindowPrediction,
@@ -150,16 +183,16 @@ class EventPostProcessor:
             x1_ms = window.start_ms + det.x1 * self.config.time_per_pixel_ms
             x2_ms = window.start_ms + det.x2 * self.config.time_per_pixel_ms
 
-            # Convert Y coordinates to frequency (if configured)
+            # Convert Y coordinates to frequency (if n_mels is configured)
             # Note: Y is inverted in flipped spectrograms (y=0 is high freq)
             min_freq_hz = None
             max_freq_hz = None
 
-            if self.config.freq_per_pixel_hz:
+            if self.config.n_mels > 0:
                 # After flipud: y=0 is max_freq, y=height is min_freq
-                # det.y1 is top, det.y2 is bottom
-                max_freq_hz = self.config.max_freq_hz - det.y1 * self.config.freq_per_pixel_hz
-                min_freq_hz = self.config.max_freq_hz - det.y2 * self.config.freq_per_pixel_hz
+                # det.y1 is top (high freq), det.y2 is bottom (low freq)
+                max_freq_hz = self._pixel_to_freq_hz(det.y1)
+                min_freq_hz = self._pixel_to_freq_hz(det.y2)
 
             # Get class name
             class_name = det.class_name
@@ -205,16 +238,16 @@ class EventPostProcessor:
         # Compute time per pixel from FFT config
         time_per_pixel_ms = fft_config.hop_ms
 
-        # Compute frequency resolution
+        # Frequency mapping via mel scale
         n_mels = fft_config.n_mels
         max_freq_hz = sample_rate / 2  # Nyquist
-        freq_per_pixel_hz = max_freq_hz / n_mels
 
         config = PostProcessorConfig(
             time_per_pixel_ms=time_per_pixel_ms,
-            freq_per_pixel_hz=freq_per_pixel_hz,
+            n_mels=n_mels,
             min_freq_hz=0.0,
             max_freq_hz=max_freq_hz,
+            use_mel_scale=True,
             merge_config=merge_config or MergeConfig(),
             class_names=class_names or {},
         )

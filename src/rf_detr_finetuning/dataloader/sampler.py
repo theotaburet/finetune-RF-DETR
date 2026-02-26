@@ -9,7 +9,8 @@ Provides samplers for:
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
+from typing import Any
 
 import numpy as np
 from torch.utils.data import Dataset, Sampler
@@ -99,7 +100,7 @@ class BalancedClassSampler(Sampler[int]):
     def __init__(
         self,
         data_source: Dataset,
-        get_label_fn: callable | None = None,
+        get_label_fn: Callable[..., Any] | None = None,
         seed: int = 42,
         samples_per_class: int | None = None,
     ) -> None:

@@ -95,13 +95,77 @@ class RFDETRTrainer:
             )
 
         # Initialize model
-        self.model = model_class(
-            pretrain_weights=self.model_config.pretrained_weights,
-        )
+        model_kwargs: dict[str, Any] = {}
+        if self.model_config.pretrained_weights:
+            model_kwargs["pretrain_weights"] = self.model_config.pretrained_weights
+        if self.model_config.num_classes != 80:  # Non-COCO class count
+            model_kwargs["num_classes"] = self.model_config.num_classes
+
+        self.model = model_class(**model_kwargs)
+
+        # Apply freeze settings
+        if self.model_config.freeze_backbone:
+            self._freeze_backbone()
+        if self.model_config.freeze_batch_norm:
+            self._freeze_batch_norm()
 
         logger.info(f"Initialized RF-DETR {self.model_config.model_size} with {self.model_config.num_classes} classes")
 
         return self.model
+
+    def _get_nn_module(self) -> Any | None:
+        """Get the underlying nn.Module from the rfdetr wrapper.
+
+        RFDETRBase/Large/Small are not nn.Modules themselves.
+        The actual PyTorch module lives at model.model.model (LWDETR).
+
+        Returns:
+            The nn.Module, or None if not accessible.
+
+        """
+        if self.model is None:
+            return None
+        # RFDETRBase -> .model (Model wrapper) -> .model (LWDETR nn.Module)
+        inner = getattr(self.model, "model", None)
+        if inner is not None:
+            inner = getattr(inner, "model", inner)
+        # Verify it's actually an nn.Module
+        if inner is not None and hasattr(inner, "modules") and hasattr(inner, "named_parameters"):
+            return inner
+        return None
+
+    def _freeze_backbone(self) -> None:
+        """Freeze backbone parameters to prevent updates during training."""
+        nn_module = self._get_nn_module()
+        if nn_module is None:
+            logger.warning("Cannot freeze backbone: unable to access inner nn.Module")
+            return
+        frozen = 0
+        for name, param in nn_module.named_parameters():
+            if "backbone" in name:
+                param.requires_grad = False
+                frozen += 1
+        logger.info(f"Froze {frozen} backbone parameters")
+
+    def _freeze_batch_norm(self) -> None:
+        """Freeze batch normalization layers (set to eval mode)."""
+        nn_module = self._get_nn_module()
+        if nn_module is None:
+            logger.warning("Cannot freeze batch norm: unable to access inner nn.Module")
+            return
+        import torch.nn as nn
+
+        frozen = 0
+        for module in nn_module.modules():
+            if isinstance(module, nn.BatchNorm2d | nn.SyncBatchNorm):
+                module.eval()
+                for param in module.parameters():
+                    param.requires_grad = False
+                frozen += 1
+        if frozen > 0:
+            logger.info(f"Froze {frozen} batch norm layers")
+        else:
+            logger.debug("No batch norm layers found to freeze")
 
     def train(
         self,
@@ -176,7 +240,7 @@ class RFDETRTrainer:
         if not checkpoint_path.exists():
             raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
 
-        checkpoint = torch.load(checkpoint_path, map_location="cpu")
+        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
 
         if "model_state_dict" in checkpoint:
             state_dict = checkpoint["model_state_dict"]
@@ -266,6 +330,13 @@ def create_rfdetr_trainer(
             optimizer=OptimizerConfig(lr=lr),
             checkpoint=CheckpointConfig(save_dir=output_dir),
         )
+
+    # Apply any additional config overrides from kwargs
+    for key, value in kwargs.items():
+        if hasattr(trainer_config, key):
+            setattr(trainer_config, key, value)
+        else:
+            logger.warning(f"Unknown trainer config key ignored: {key}")
 
     model_config = RFDETRConfig(
         model_size=model_size,

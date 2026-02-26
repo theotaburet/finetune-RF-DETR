@@ -93,6 +93,7 @@ from rf_detr_finetuning.predict import prediction
 
 # Prediction
 from rf_detr_finetuning.predictor import (
+    AudioPredictionResult,
     AudioPredictor,
     Detection,
     PredictionResult,
@@ -161,6 +162,7 @@ __all__ = [
     "Detection",
     "PredictionResult",
     "AudioPredictor",
+    "AudioPredictionResult",
     "WindowPrediction",
     "predict_directory",
     # Event processing

@@ -70,6 +70,10 @@ def compute_mel_spectrogram(
         padding_needed = n_fft - audio_length
         audio = np.pad(audio, (0, padding_needed), mode="constant", constant_values=0.0)
         logger.debug(f"Padded audio: {audio_length} -> {len(audio)} samples for n_fft={n_fft}")
+        # Recreate tensor from padded audio
+        audio_tensor = torch.from_numpy(audio).float()
+        if audio_tensor.dim() == 1:
+            audio_tensor = audio_tensor.unsqueeze(0)
 
     try:
         spec = mel_spectrogram(
@@ -80,6 +84,7 @@ def compute_mel_spectrogram(
             hop_length=hop_length,
             f_min=f_min,
             f_max=f_max,
+            power=power,
             device=device,
         )
 

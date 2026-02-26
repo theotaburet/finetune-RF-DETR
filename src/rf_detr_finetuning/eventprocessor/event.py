@@ -95,7 +95,9 @@ class AudioEvent:
     def merge(self, other: AudioEvent) -> AudioEvent:
         """Merge this event with another.
 
-        Takes the union of temporal boundaries and averages scores.
+        Takes the union of temporal boundaries and keeps the maximum score.
+        Using max (rather than average) prevents score decay when merging
+        chains of overlapping events.
 
         Args:
             other: Event to merge with.
@@ -109,7 +111,7 @@ class AudioEvent:
             end_ms=max(self.end_ms, other.end_ms),
             class_id=self.class_id,
             class_name=self.class_name,
-            score=(self.score + other.score) / 2,
+            score=max(self.score, other.score),
             min_freq_hz=min(
                 self.min_freq_hz or float("inf"),
                 other.min_freq_hz or float("inf"),
@@ -311,7 +313,7 @@ class EventList:
             "duration_ms": self.duration_ms,
             "num_events": len(self.events),
             "events": [e.to_dict() for e in self.events],
-            "class_names": self.class_names,
+            "class_names": {str(k): v for k, v in self.class_names.items()},
         }
 
     def save(self, path: str | Path) -> None:
@@ -343,9 +345,13 @@ class EventList:
 
         events = [AudioEvent.from_dict(e) for e in data.get("events", [])]
 
+        # JSON serialization turns int keys to strings; convert back
+        raw_class_names = data.get("class_names", {})
+        class_names = {int(k): v for k, v in raw_class_names.items()}
+
         return cls(
             events=events,
             audio_path=data.get("audio_path"),
             duration_ms=data.get("duration_ms", 0.0),
-            class_names=data.get("class_names", {}),
+            class_names=class_names,
         )

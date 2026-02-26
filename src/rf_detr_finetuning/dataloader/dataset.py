@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -299,12 +300,8 @@ class AudioChunkDataset(Dataset):
             Tuple of (chunk_tensor, detection_target).
 
         """
-        # Find which file this index belongs to
-        file_idx = 0
-        for i, cum in enumerate(self._cumulative_chunks[1:], 1):
-            if idx < cum:
-                file_idx = i - 1
-                break
+        # Find which file this index belongs to (O(log n) with bisect)
+        file_idx = bisect_right(self._cumulative_chunks, idx) - 1
 
         chunk_idx = idx - self._cumulative_chunks[file_idx]
 
@@ -312,14 +309,8 @@ class AudioChunkDataset(Dataset):
         audio_path = self.audio_files[file_idx]
         metadata_path = self.metadata_files[file_idx]
 
-        # Load metadata
-        with open(metadata_path) as f:
-            metadata = json.load(f)
-
-        events = metadata.get("events", [])
-
         # Process with chunker
-        chunks = self.chunker.process_file(str(audio_path), events)
+        chunks = self.chunker.chunk_audio_file(str(audio_path), metadata_path)
 
         # Handle case where actual chunks differ from estimate
         if chunk_idx >= len(chunks):
@@ -337,7 +328,7 @@ class AudioChunkDataset(Dataset):
             # COCO format: [x, y, width, height] -> XYXY
             x, y, w, h = bbox.x, bbox.y, bbox.width, bbox.height
             boxes.append([x, y, x + w, y + h])
-            labels.append(bbox.class_id)
+            labels.append(bbox.category_id)
 
         boxes_tensor = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4))
         labels_tensor = torch.tensor(labels, dtype=torch.int64) if labels else torch.zeros(0, dtype=torch.int64)
@@ -419,7 +410,7 @@ class InMemoryChunkDataset(Dataset):
         for bbox in bboxes:
             x, y, w, h = bbox.x, bbox.y, bbox.width, bbox.height
             boxes.append([x, y, x + w, y + h])
-            labels.append(bbox.class_id)
+            labels.append(bbox.category_id)
 
         boxes_tensor = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4))
         labels_tensor = torch.tensor(labels, dtype=torch.int64) if labels else torch.zeros(0, dtype=torch.int64)
@@ -460,11 +451,7 @@ class InMemoryChunkDataset(Dataset):
         chunks = []
 
         for audio_path, meta_path in zip(audio_files, metadata_files):
-            with open(meta_path) as f:
-                metadata = json.load(f)
-
-            events = metadata.get("events", [])
-            file_chunks = chunker.process_file(str(audio_path), events)
+            file_chunks = chunker.chunk_audio_file(str(audio_path), meta_path)
 
             for chunk in file_chunks:
                 chunk_meta = {

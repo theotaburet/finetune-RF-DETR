@@ -6,7 +6,7 @@ fft:
   # FFT window duration in milliseconds
   # Larger = better frequency resolution, worse time resolution
   # Recommended: 20-50ms for general audio, 10-25ms for transients
-  fft_ms: 50
+  fft_ms: 100
 
   # Hop duration in milliseconds (time per spectrogram pixel)
   # Smaller = finer time resolution, larger spectrograms
@@ -73,7 +73,7 @@ preprocessing:
   detrend: true
 
   # Pre-emphasis coefficient (0 = disabled, 0.97 = typical for speech)
-  preemphasis: 0.0
+  preemphasis: 0.97
 
   # Automatic Gain Control - normalizes audio loudness
   agc:

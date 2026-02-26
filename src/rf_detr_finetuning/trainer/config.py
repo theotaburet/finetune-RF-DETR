@@ -158,6 +158,9 @@ class TrainerConfig:
             TrainerConfig instance.
 
         """
+        # Work on a copy to avoid mutating the caller's dictionary
+        config_dict = dict(config_dict)
+
         # Extract nested configs
         optimizer_dict = config_dict.pop("optimizer", {})
         scheduler_dict = config_dict.pop("scheduler", {})
@@ -197,7 +200,12 @@ class TrainerConfig:
         return cls.from_dict(config_dict)
 
     def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary."""
+        """Convert to dictionary.
+
+        Serializes all fields so that ``from_dict(to_dict())`` round-trips
+        without data loss.
+
+        """
         return {
             "epochs": self.epochs,
             "batch_size": self.batch_size,
@@ -215,15 +223,26 @@ class TrainerConfig:
                 "name": self.optimizer.name,
                 "lr": self.optimizer.lr,
                 "weight_decay": self.optimizer.weight_decay,
+                "momentum": self.optimizer.momentum,
+                "betas": list(self.optimizer.betas),
+                "eps": self.optimizer.eps,
             },
             "scheduler": {
                 "name": self.scheduler.name,
                 "warmup_epochs": self.scheduler.warmup_epochs,
+                "warmup_lr": self.scheduler.warmup_lr,
                 "min_lr": self.scheduler.min_lr,
+                "step_size": self.scheduler.step_size,
+                "gamma": self.scheduler.gamma,
+                "patience": self.scheduler.patience,
             },
             "checkpoint": {
                 "save_dir": str(self.checkpoint.save_dir),
                 "save_every_n_epochs": self.checkpoint.save_every_n_epochs,
                 "save_best": self.checkpoint.save_best,
+                "best_metric": self.checkpoint.best_metric,
+                "best_mode": self.checkpoint.best_mode,
+                "keep_last_n": self.checkpoint.keep_last_n,
+                "resume_from": str(self.checkpoint.resume_from) if self.checkpoint.resume_from else None,
             },
         }

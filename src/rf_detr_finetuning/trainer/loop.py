@@ -16,7 +16,8 @@ from typing import Any, Protocol
 
 import torch
 from torch import nn
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp.autocast_mode import autocast as amp_autocast
+from torch.amp.grad_scaler import GradScaler
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 from torch.utils.data import DataLoader
@@ -135,6 +136,9 @@ class Trainer:
 
         # Training state
         self.state = TrainingState()
+        # Initialize best_metric based on checkpoint config mode
+        if config.checkpoint.best_mode == "max":
+            self.state.best_metric = float("-inf")
 
     def _create_optimizer(self) -> Optimizer:
         """Create optimizer from config."""
@@ -169,7 +173,9 @@ class Trainer:
     def _create_scheduler(self) -> _LRScheduler | None:
         """Create learning rate scheduler from config."""
         sched_config = self.config.scheduler
-        total_steps = len(self.train_loader) * self.config.epochs
+        # Account for gradient accumulation: effective steps per epoch = batches / accumulate
+        steps_per_epoch = len(self.train_loader) // self.config.accumulate_grad_batches
+        total_steps = steps_per_epoch * self.config.epochs
 
         if sched_config.name.lower() == "cosine":
             return torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -232,9 +238,16 @@ class Trainer:
                     self.state.val_loss = val_loss
                     metrics["val_loss"] = val_loss
 
-                    # Track best
-                    if val_loss < self.state.best_metric:
-                        self.state.best_metric = val_loss
+                    # Track best metric using checkpoint config
+                    ckpt_cfg = self.config.checkpoint
+                    tracked_metric = metrics.get(ckpt_cfg.best_metric, val_loss)
+                    is_better = (
+                        tracked_metric < self.state.best_metric
+                        if ckpt_cfg.best_mode == "min"
+                        else tracked_metric > self.state.best_metric
+                    )
+                    if is_better:
+                        self.state.best_metric = tracked_metric
                         self.state.best_epoch = epoch
 
                 self.state.metrics = metrics
@@ -318,7 +331,7 @@ class Trainer:
 
         # Forward pass with optional AMP
         if self.config.mixed_precision:
-            with autocast():
+            with amp_autocast(device_type=self.device.type):
                 if self.loss_fn is not None:
                     outputs = self.model(images)
                     loss = self.loss_fn(outputs, targets)

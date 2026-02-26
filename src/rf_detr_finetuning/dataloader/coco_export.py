@@ -364,7 +364,9 @@ def convert_audio_to_coco(
 
     # Shuffle for random split
     if random_seed is not None:
-        random.seed(random_seed)
+        rng = random.Random(random_seed)
+        rng.shuffle(audio_files)
+    else:
         random.shuffle(audio_files)
 
     # Split into train/valid/test
@@ -423,22 +425,18 @@ def convert_audio_to_coco(
                             }
                         ]
 
-                    # Process events with frequency-aware categories
-                    processed_events = []
+                    # Build frequency-aware category mapping from original events.
+                    # Maps (original_category_id) -> frequency-aware category_id so we can
+                    # remap the bboxes that come back from the chunker.
+                    event_category_map: dict[int, int] = {}
                     for event in events:
                         label = event.get("label_hierarchy", "").split(" + ")[-1] or event.get("category", "unknown")
                         hz_min = event.get("hz_min", 0)
                         hz_max = event.get("hz_max", 22050)
+                        orig_cat_id = event.get("category_id", 0)
 
-                        cat_id, cat_name = category_registry.get_category_with_frequency(label, hz_min, hz_max)
-
-                        processed_events.append(
-                            {
-                                **event,
-                                "category": cat_name,
-                                "category_id": cat_id,
-                            }
-                        )
+                        cat_id, _cat_name = category_registry.get_category_with_frequency(label, hz_min, hz_max)
+                        event_category_map[orig_cat_id] = cat_id
 
                     # Chunk audio
                     chunks = chunker.chunk_audio_file(audio_path, json_path)
@@ -463,7 +461,8 @@ def convert_audio_to_coco(
                         if chunk.spectrogram.ndim == 2:
                             img = Image.fromarray(chunk.spectrogram)
                         else:
-                            img = Image.fromarray(chunk.spectrogram)
+                            # 3-channel (RGB) spectrogram
+                            img = Image.fromarray(chunk.spectrogram, mode="RGB")
 
                         img.save(img_path)
 
@@ -482,6 +481,9 @@ def convert_audio_to_coco(
                             coco_bbox = bbox.to_coco_bbox()
                             area = bbox.width * bbox.height
 
+                            # Remap category_id through frequency-aware mapping
+                            remapped_cat_id = event_category_map.get(bbox.category_id, bbox.category_id)
+
                             ann_extra = {
                                 "original_time_start_ms": bbox.original_time_start_ms,
                                 "original_time_end_ms": bbox.original_time_end_ms,
@@ -490,7 +492,7 @@ def convert_audio_to_coco(
                                 "overlap_ratio": bbox.overlap_ratio,
                             }
 
-                            coco_builder.add_annotation(coco_bbox, image_id, bbox.category_id, area, ann_extra)
+                            coco_builder.add_annotation(coco_bbox, image_id, remapped_cat_id, area, ann_extra)
                             stats["annotations"] += 1
 
                         stats["chunks"] += 1
@@ -509,15 +511,12 @@ def convert_audio_to_coco(
             coco_builder.save(coco_path)
 
     # Print summary
-    logger.info("=" * 70)
     logger.info("COCO Export Summary")
-    logger.info("=" * 70)
     logger.info(f"Processed: {stats['processed']} files")
     logger.info(f"Failed: {stats['failed']} files")
     logger.info(f"Total chunks: {stats['chunks']}")
     logger.info(f"Total annotations: {stats['annotations']}")
     logger.info(f"Categories: {len(category_registry.categories)}")
     logger.info(f"Output directory: {output_dir}")
-    logger.info("=" * 70)
 
     return output_dir
