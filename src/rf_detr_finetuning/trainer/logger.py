@@ -18,15 +18,6 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
 from rich.table import Table
 
 logger = logging.getLogger(__name__)
@@ -71,19 +62,6 @@ class MetricsTracker:
         if not values:
             return 0.0
         return sum(values) / len(values)
-
-    def get_last(self, name: str) -> float:
-        """Get last value of metric.
-
-        Args:
-            name: Metric name.
-
-        Returns:
-            Last value, or 0 if no values.
-
-        """
-        values = self.metrics.get(name, [])
-        return values[-1] if values else 0.0
 
     def end_epoch(self) -> dict[str, float]:
         """Finalize epoch metrics.
@@ -133,24 +111,6 @@ class MetricsTracker:
 
         with open(path, "w") as f:
             json.dump(self.to_dict(), f, indent=2)
-
-    @classmethod
-    def load(cls, path: str | Path) -> MetricsTracker:
-        """Load metrics from JSON file.
-
-        Args:
-            path: Input file path.
-
-        Returns:
-            MetricsTracker instance.
-
-        """
-        with open(path) as f:
-            data = json.load(f)
-
-        tracker = cls()
-        tracker.epoch_metrics = data.get("epoch_metrics", [])
-        return tracker
 
 
 class TrainingLogger:
@@ -250,81 +210,3 @@ class TrainingLogger:
 
         """
         self.metrics_tracker.update(loss=loss, **extra)
-
-    def create_epoch_progress(self) -> Progress:
-        """Create Rich progress bar for epoch iteration.
-
-        Returns:
-            Progress context manager.
-
-        """
-        return Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            MofNCompleteColumn(),
-            TimeRemainingColumn(),
-            console=self.console,
-        )
-
-    def log_info(self, message: str) -> None:
-        """Log info message.
-
-        Args:
-            message: Message to log.
-
-        """
-        self.console.print(f"[blue]ℹ[/blue] {message}")
-        logger.info(message)
-
-    def log_warning(self, message: str) -> None:
-        """Log warning message.
-
-        Args:
-            message: Message to log.
-
-        """
-        self.console.print(f"[yellow]⚠[/yellow] {message}")
-        logger.warning(message)
-
-    def log_error(self, message: str) -> None:
-        """Log error message.
-
-        Args:
-            message: Message to log.
-
-        """
-        self.console.print(f"[red]✗[/red] {message}")
-        logger.error(message)
-
-    def log_success(self, message: str) -> None:
-        """Log success message.
-
-        Args:
-            message: Message to log.
-
-        """
-        self.console.print(f"[green]✓[/green] {message}")
-        logger.info(message)
-
-    def display_final_summary(self) -> None:
-        """Display final training summary."""
-        if not self.metrics_tracker.epoch_metrics:
-            return
-
-        # Find best epoch
-        val_losses = self.metrics_tracker.get_history("val_loss")
-        if val_losses:
-            best_idx = val_losses.index(min(val_losses))
-            best_metrics = self.metrics_tracker.epoch_metrics[best_idx]
-
-            self.console.print(f"\n[bold]Best Model (Epoch {best_idx + 1})[/bold]")
-            table = Table()
-            table.add_column("Metric", style="cyan")
-            table.add_column("Value", style="green")
-
-            for name, value in best_metrics.items():
-                table.add_row(name, f"{value:.4f}")
-
-            self.console.print(table)

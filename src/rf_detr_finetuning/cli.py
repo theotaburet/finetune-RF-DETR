@@ -152,14 +152,10 @@ def audio_to_coco(
     input_dir: str,
     output_dir: str,
     split_ratios: str = "0.7,0.2,0.1",
-    n_fft: int = 2048,
-    hop_length: int = 512,
     n_mels: int = 128,
     fmin: float = 0.0,
     fmax: float | None = None,
-    target_sr: int | None = None,
     frequency_bins: str | None = None,
-    auto_infer_bins: int | None = None,
 ) -> str:
     """Convert audio dataset with JSON metadata to COCO format spectrograms.
 
@@ -167,17 +163,12 @@ def audio_to_coco(
         input_dir: Input directory containing audio files (.flac, .wav, etc.) with matching .json metadata.
         output_dir: Output directory for the COCO-format dataset with spectrogram images.
         split_ratios: Train,valid,test split ratios as comma-separated values (default: "0.7,0.2,0.1").
-        n_fft: FFT window size (default: 2048).
-        hop_length: Hop length for STFT (default: 512).
         n_mels: Number of mel filterbanks (default: 128).
         fmin: Minimum frequency for mel filterbank in Hz (default: 0.0).
         fmax: Maximum frequency for mel filterbank in Hz (default: sr/2).
-        target_sr: Target sample rate for resampling (default: keep original).
         frequency_bins: Frequency bins for category splitting, format: 'min1,max1,name1;min2,max2,name2'.
             Example: '0,500,low;500,5000,mid;5000,22050,high' creates separate categories
             for events in different frequency bands (useful for distinguishing ship noise from sonar).
-        auto_infer_bins: Automatically infer N frequency bins from the data distribution.
-            Overrides frequency_bins if set. Example: 3 for low/mid/high bins.
 
     Returns:
         Path to the output directory.
@@ -187,8 +178,8 @@ def audio_to_coco(
 
     # Create AudioChunker from parameters
     fft_config = TimeBasedFFTConfig(
-        fft_ms=25.0,  # Default, will be overridden by n_fft calculation
-        hop_ms=10.0,  # Default, will be overridden by hop_length calculation
+        fft_ms=25.0,
+        hop_ms=10.0,
         n_mels=n_mels,
     )
 

@@ -18,6 +18,8 @@ from rf_detr_finetuning.trainer.config import TrainerConfig
 
 logger = logging.getLogger(__name__)
 
+COCO_NUM_CLASSES = 80
+
 
 @dataclass
 class RFDETRConfig:
@@ -98,7 +100,7 @@ class RFDETRTrainer:
         model_kwargs: dict[str, Any] = {}
         if self.model_config.pretrained_weights:
             model_kwargs["pretrain_weights"] = self.model_config.pretrained_weights
-        if self.model_config.num_classes != 80:  # Non-COCO class count
+        if self.model_config.num_classes != COCO_NUM_CLASSES:
             model_kwargs["num_classes"] = self.model_config.num_classes
 
         self.model = model_class(**model_kwargs)
@@ -255,13 +257,13 @@ class RFDETRTrainer:
     def export(
         self,
         output_path: str | Path,
-        format: str = "pytorch",
+        export_format: str = "pytorch",
     ) -> Path:
         """Export trained model.
 
         Args:
             output_path: Output file path.
-            format: Export format ('pytorch', 'onnx', 'torchscript').
+            export_format: Export format ('pytorch', 'onnx', 'torchscript').
 
         Returns:
             Path to exported model.
@@ -273,16 +275,16 @@ class RFDETRTrainer:
         output_path = Path(output_path)
         output_path.parent.mkdir(parents=True, exist_ok=True)
 
-        if format == "pytorch":
+        if export_format == "pytorch":
             torch.save(self.model.state_dict(), output_path)
-        elif format == "torchscript":
+        elif export_format == "torchscript":
             scripted = torch.jit.script(self.model)
             scripted.save(str(output_path))
-        elif format == "onnx":
+        elif export_format == "onnx":
             # ONNX export would require dummy input
             raise NotImplementedError("ONNX export not yet implemented")
         else:
-            raise ValueError(f"Unknown export format: {format}")
+            raise ValueError(f"Unknown export format: {export_format}")
 
         logger.info(f"Exported model to {output_path}")
         return output_path

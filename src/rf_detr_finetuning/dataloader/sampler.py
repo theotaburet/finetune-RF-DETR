@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Iterator
-from typing import Any
 
 import numpy as np
 from torch.utils.data import Dataset, Sampler
@@ -100,7 +99,7 @@ class BalancedClassSampler(Sampler[int]):
     def __init__(
         self,
         data_source: Dataset,
-        get_label_fn: Callable[..., Any] | None = None,
+        get_label_fn: Callable[..., int] | None = None,
         seed: int = 42,
         samples_per_class: int | None = None,
     ) -> None:
@@ -140,12 +139,9 @@ class BalancedClassSampler(Sampler[int]):
             if self.get_label_fn is not None:
                 label = self.get_label_fn(self.data_source[i])
             else:
-                # Default: use first label from target
-                _, target = self.data_source[i]
-                if hasattr(target, "labels") and len(target.labels) > 0:
-                    label = int(target.labels[0])
-                else:
-                    label = -1
+                from rf_detr_finetuning.dataloader.utils import extract_default_label
+
+                label = extract_default_label(self.data_source[i])
 
             if label not in self.class_to_indices:
                 self.class_to_indices[label] = []
@@ -181,57 +177,3 @@ class BalancedClassSampler(Sampler[int]):
     def __len__(self) -> int:
         """Return total number of samples per epoch."""
         return len(self.class_to_indices) * self.samples_per_class
-
-
-class EpochSampler(Sampler[int]):
-    """Sampler that re-shuffles each epoch with incrementing seed.
-
-    Provides different random order each epoch while maintaining
-    reproducibility across runs.
-
-    Args:
-        data_source: Dataset to sample from.
-        base_seed: Base random seed.
-
-    """
-
-    def __init__(
-        self,
-        data_source: Dataset,
-        base_seed: int = 42,
-    ) -> None:
-        """Initialize epoch-aware random sampler.
-
-        Args:
-            data_source: Dataset to sample from.
-            base_seed: Base random seed.
-
-        """
-        super().__init__(data_source)
-        self.data_source = data_source
-        self.base_seed = base_seed
-        self.epoch = 0
-
-    def set_epoch(self, epoch: int) -> None:
-        """Set current epoch for reproducible shuffling.
-
-        Args:
-            epoch: Current epoch number.
-
-        """
-        self.epoch = epoch
-
-    def __iter__(self) -> Iterator[int]:
-        """Generate shuffled indices for current epoch."""
-        n = len(self.data_source)
-        indices = list(range(n))
-
-        # Use epoch-specific seed
-        rng = np.random.default_rng(self.base_seed + self.epoch)
-        rng.shuffle(indices)
-
-        return iter(indices)
-
-    def __len__(self) -> int:
-        """Return number of samples."""
-        return len(self.data_source)

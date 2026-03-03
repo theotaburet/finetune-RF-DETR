@@ -59,7 +59,9 @@ def draw_bboxes_on_spectrogram(
 
     # Normalize to uint8
     if img.dtype != np.uint8:
-        img = ((img - img.min()) / (img.max() - img.min() + 1e-8) * 255).astype(np.uint8)
+        from rf_detr_finetuning.dataprocessor.normalization import normalize_to_range
+
+        img = normalize_to_range(img, 0.0, 255.0).astype(np.uint8)
 
     # Handle empty bboxes
     if not bboxes:
@@ -122,7 +124,9 @@ def _draw_bboxes_manual(
 
     # Normalize to uint8
     if img.dtype != np.uint8:
-        img = ((img - img.min()) / (img.max() - img.min() + 1e-8) * 255).astype(np.uint8)
+        from rf_detr_finetuning.dataprocessor.normalization import normalize_to_range
+
+        img = normalize_to_range(img, 0.0, 255.0).astype(np.uint8)
 
     # Draw bounding boxes
     for bbox in bboxes:

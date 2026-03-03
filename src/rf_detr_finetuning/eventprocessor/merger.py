@@ -3,7 +3,6 @@
 Provides algorithms for merging overlapping detections:
 - NMS-based merging
 - Temporal IoU merging
-- Soft-NMS
 
 """
 
@@ -11,6 +10,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Literal
 
 from rf_detr_finetuning.eventprocessor.event import AudioEvent, EventList
 
@@ -33,7 +33,7 @@ class MergeConfig:
     iou_threshold: float = 0.5
     score_threshold: float = 0.0
     merge_same_class_only: bool = True
-    merge_strategy: str = "max"
+    merge_strategy: Literal["max", "avg", "sum"] = "max"
     gap_tolerance_ms: float = 0.0
 
 
@@ -247,73 +247,3 @@ def temporal_merge(
     )
     merger = EventMerger(config)
     return merger.merge(events)
-
-
-def soft_nms(
-    events: EventList,
-    iou_threshold: float = 0.3,
-    sigma: float = 0.5,
-    score_threshold: float = 0.001,
-) -> EventList:
-    """Apply Soft-NMS to events.
-
-    Instead of hard suppression, reduces scores of overlapping events.
-
-    Args:
-        events: Input events.
-        iou_threshold: IoU threshold for score decay.
-        sigma: Gaussian decay parameter.
-        score_threshold: Minimum score to keep.
-
-    Returns:
-        Events with adjusted scores.
-
-    """
-    import math
-
-    if len(events) == 0:
-        return events
-
-    # Copy events to avoid modifying originals
-    result_events = [
-        AudioEvent(
-            start_ms=e.start_ms,
-            end_ms=e.end_ms,
-            class_id=e.class_id,
-            class_name=e.class_name,
-            score=e.score,
-            min_freq_hz=e.min_freq_hz,
-            max_freq_hz=e.max_freq_hz,
-            source_windows=e.source_windows.copy(),
-            metadata=e.metadata.copy(),
-        )
-        for e in events
-    ]
-
-    # Sort by score
-    result_events.sort(key=lambda e: e.score, reverse=True)
-
-    keep = []
-    while result_events:
-        # Take highest scoring event
-        best = result_events.pop(0)
-        keep.append(best)
-
-        # Decay scores of overlapping events
-        for other in result_events:
-            iou = best.temporal_iou(other)
-            if iou > iou_threshold:
-                # Gaussian decay
-                weight = math.exp(-(iou * iou) / sigma)
-                other.score *= weight
-
-        # Re-sort and filter
-        result_events = [e for e in result_events if e.score >= score_threshold]
-        result_events.sort(key=lambda e: e.score, reverse=True)
-
-    return EventList(
-        events=keep,
-        audio_path=events.audio_path,
-        duration_ms=events.duration_ms,
-        class_names=events.class_names,
-    ).sort_by_time()

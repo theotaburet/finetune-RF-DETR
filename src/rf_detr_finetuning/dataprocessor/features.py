@@ -7,14 +7,10 @@ All spectrogram computation MUST use ezakodio.dsp.mel_spectrogram.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 from ezakodio.dsp import mel_spectrogram
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -40,7 +36,7 @@ def compute_mel_spectrogram(
         hop_length: Hop length in samples (None = auto)
         f_min: Minimum frequency for mel filterbank
         f_max: Maximum frequency (None = sr/2)
-        power: Exponent for magnitude spectrogram (1=energy, 2=power)
+        power: Exponent for magnitude spectrogram (1=amplitude, 2=power)
         device: Device for computation ("cpu" or "cuda")
 
     Returns:

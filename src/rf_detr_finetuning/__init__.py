@@ -2,34 +2,18 @@
 
 A modular pipeline for fine-tuning RF-DETR models on audio event detection.
 
-Modules:
+Subpackages:
     dataprocessor: Audio I/O, spectrogram features, chunking, preprocessing
     dataloader: Dataset classes, collate functions, train/val/test splitting
     trainer: Training loop, checkpointing, logging
     predictor: Inference on images and audio files
     eventprocessor: Convert window detections to full-audio events
 
-Legacy modules (for backward compatibility):
-    audio_chunking: Original chunking implementation
-    audio_to_coco: Original COCO conversion
-    finetune: Original training wrapper
-    predict: Original prediction
-
 """
 
 __version__ = "0.2.0"
 
-# =============================================================================
-# New modular API (preferred)
-# =============================================================================
-
-# Data processing
-# =============================================================================
-# Legacy API (backward compatibility)
-# =============================================================================
-# Legacy modules have been removed. Use the new modular API instead:
-# - from rf_detr_finetuning.dataprocessor import AudioChunker, ChunkConfig, TimeBasedFFTConfig
-# - from rf_detr_finetuning.dataloader import COCODatasetBuilder, CategoryRegistry
+# Legacy compatibility (use new modular API instead)
 from rf_detr_finetuning.data import convert_yolo_to_coco
 
 # Data loading
@@ -113,9 +97,6 @@ from rf_detr_finetuning.trainer import (
 )
 
 __all__ = [
-    # ==========================================================================
-    # New modular API
-    # ==========================================================================
     # Data processing
     "load_audio_file",
     "compute_mel_spectrogram",
@@ -173,9 +154,7 @@ __all__ = [
     "EventPostProcessor",
     "PostProcessorConfig",
     "windows_to_events",
-    # ==========================================================================
     # Deprecated (will be removed in v0.3.0)
-    # ==========================================================================
     "convert_yolo_to_coco",
     "finetune_model",
     "prediction",

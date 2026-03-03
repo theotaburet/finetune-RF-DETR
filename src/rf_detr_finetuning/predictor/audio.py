@@ -12,9 +12,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
+
+if TYPE_CHECKING:
+    from rf_detr_finetuning.dataprocessor.chunker import AudioChunker
 
 from rf_detr_finetuning.predictor.inference import (
     Detection,
@@ -48,39 +51,6 @@ class WindowPrediction:
     def __len__(self) -> int:
         """Return number of detections in window."""
         return len(self.detections)
-
-    def get_time_detections(
-        self,
-        time_per_pixel_ms: float,
-    ) -> list[dict[str, Any]]:
-        """Convert pixel coordinates to time coordinates.
-
-        Args:
-            time_per_pixel_ms: Milliseconds per pixel (from FFT config).
-
-        Returns:
-            List of detections with time coordinates.
-
-        """
-        time_dets = []
-        for det in self.detections:
-            # Convert X coordinates to time offset within window
-            x1_ms = det.x1 * time_per_pixel_ms
-            x2_ms = det.x2 * time_per_pixel_ms
-
-            time_dets.append(
-                {
-                    "start_ms": self.start_ms + x1_ms,
-                    "end_ms": self.start_ms + x2_ms,
-                    "min_freq_idx": int(det.y1),
-                    "max_freq_idx": int(det.y2),
-                    "score": det.score,
-                    "class_id": det.class_id,
-                    "class_name": det.class_name,
-                }
-            )
-
-        return time_dets
 
 
 @dataclass
@@ -134,7 +104,7 @@ class AudioPredictor:
     def __init__(
         self,
         predictor: Predictor,
-        chunker: Any,  # AudioChunker from dataprocessor
+        chunker: AudioChunker,
     ) -> None:
         """Initialize audio inference pipeline.
 

@@ -36,15 +36,6 @@ class OptimizerConfig:
     betas: tuple[float, float] = (0.9, 0.999)
     eps: float = 1e-8
 
-    def to_dict(self) -> dict[str, Any]:
-        """Convert to dictionary for optimizer construction."""
-        return {
-            "lr": self.lr,
-            "weight_decay": self.weight_decay,
-            "betas": self.betas,
-            "eps": self.eps,
-        }
-
 
 @dataclass
 class SchedulerConfig:

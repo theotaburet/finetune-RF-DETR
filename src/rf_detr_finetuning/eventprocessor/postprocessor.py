@@ -13,7 +13,7 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
-import numpy as np
+from ezakodio import hz_to_mel, mel_to_hz
 
 from rf_detr_finetuning.eventprocessor.event import AudioEvent, EventList
 from rf_detr_finetuning.eventprocessor.merger import (
@@ -152,12 +152,12 @@ class EventPostProcessor:
 
         if self.config.use_mel_scale:
             # Convert frequency bounds to mel
-            min_mel = 2595.0 * np.log10(1.0 + min_freq / 700.0)
-            max_mel = 2595.0 * np.log10(1.0 + max_freq / 700.0)
+            min_mel = hz_to_mel(min_freq)
+            max_mel = hz_to_mel(max_freq)
             # Interpolate in mel space (y=0 is top = max_freq = max_mel)
             mel = max_mel - (pixel_y / n_mels) * (max_mel - min_mel)
             # Convert mel back to Hz
-            return 700.0 * (10.0 ** (mel / 2595.0) - 1.0)
+            return mel_to_hz(mel)
         else:
             # Linear mapping
             return max_freq - (pixel_y / n_mels) * (max_freq - min_freq)
@@ -217,16 +217,14 @@ class EventPostProcessor:
     def from_fft_config(
         cls,
         fft_config: Any,  # TimeBasedFFTConfig
-        chunk_config: Any,  # ChunkConfig
         sample_rate: int,
         class_names: dict[int, str] | None = None,
         merge_config: MergeConfig | None = None,
     ) -> EventPostProcessor:
-        """Create post-processor from FFT and chunk configs.
+        """Create post-processor from FFT config.
 
         Args:
             fft_config: TimeBasedFFTConfig instance.
-            chunk_config: ChunkConfig instance.
             sample_rate: Audio sample rate.
             class_names: Optional class name mapping.
             merge_config: Optional merge configuration.

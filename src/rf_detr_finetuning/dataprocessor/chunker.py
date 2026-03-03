@@ -84,6 +84,18 @@ class AudioChunker:
         self.fmax = fmax
         self.preprocessing_config = preprocessing_config
 
+    def _resolve_fmax(self, sample_rate: int) -> float:
+        """Resolve maximum frequency, defaulting to Nyquist if not set.
+
+        Args:
+            sample_rate: Audio sample rate in Hz.
+
+        Returns:
+            Maximum frequency in Hz.
+
+        """
+        return self.fmax if self.fmax else sample_rate / 2
+
     def _compute_spectrogram(
         self,
         audio: np.ndarray,
@@ -101,7 +113,7 @@ class AudioChunker:
         """
         n_fft = self.fft_config.get_n_fft(sample_rate)
         hop_length = self.fft_config.get_hop_length(sample_rate)
-        fmax = self.fmax if self.fmax else sample_rate / 2
+        fmax = self._resolve_fmax(sample_rate)
 
         spec = compute_mel_spectrogram(
             audio=audio,
@@ -139,7 +151,7 @@ class AudioChunker:
         """
         events = events or []
         total_duration_ms = (len(audio) / sample_rate) * 1000
-        fmax = self.fmax if self.fmax else sample_rate / 2
+        fmax = self._resolve_fmax(sample_rate)
 
         boundaries = compute_chunk_boundaries(total_duration_ms, self.chunk_config)
 
@@ -254,7 +266,7 @@ class AudioChunker:
 
         events = []
         source_uuid = audio_path.stem
-        fmax = self.fmax if self.fmax else sample_rate / 2
+        fmax = self._resolve_fmax(sample_rate)
         actual_duration_ms = (len(audio) / sample_rate) * 1000
 
         if metadata_path and metadata_path.exists():

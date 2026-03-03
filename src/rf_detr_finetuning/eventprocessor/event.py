@@ -46,28 +46,9 @@ class AudioEvent:
         return self.end_ms - self.start_ms
 
     @property
-    def duration_s(self) -> float:
-        """Event duration in seconds."""
-        return self.duration_ms / 1000
-
-    @property
     def center_ms(self) -> float:
         """Event center time in milliseconds."""
         return (self.start_ms + self.end_ms) / 2
-
-    def overlaps(self, other: AudioEvent, iou_threshold: float = 0.0) -> bool:
-        """Check if this event overlaps with another.
-
-        Args:
-            other: Another AudioEvent.
-            iou_threshold: Minimum IoU for overlap.
-
-        Returns:
-            True if events overlap above threshold.
-
-        """
-        iou = self.temporal_iou(other)
-        return iou > iou_threshold
 
     def temporal_iou(self, other: AudioEvent) -> float:
         """Compute temporal IoU with another event.
@@ -91,41 +72,6 @@ class AudioEvent:
             return 0.0
 
         return intersection / union
-
-    def merge(self, other: AudioEvent) -> AudioEvent:
-        """Merge this event with another.
-
-        Takes the union of temporal boundaries and keeps the maximum score.
-        Using max (rather than average) prevents score decay when merging
-        chains of overlapping events.
-
-        Args:
-            other: Event to merge with.
-
-        Returns:
-            New merged AudioEvent.
-
-        """
-        return AudioEvent(
-            start_ms=min(self.start_ms, other.start_ms),
-            end_ms=max(self.end_ms, other.end_ms),
-            class_id=self.class_id,
-            class_name=self.class_name,
-            score=max(self.score, other.score),
-            min_freq_hz=min(
-                self.min_freq_hz or float("inf"),
-                other.min_freq_hz or float("inf"),
-            )
-            if self.min_freq_hz or other.min_freq_hz
-            else None,
-            max_freq_hz=max(
-                self.max_freq_hz or 0,
-                other.max_freq_hz or 0,
-            )
-            if self.max_freq_hz or other.max_freq_hz
-            else None,
-            source_windows=list(set(self.source_windows + other.source_windows)),
-        )
 
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
@@ -187,6 +133,23 @@ class EventList:
         """Get event by index."""
         return self.events[idx]
 
+    def _with_events(self, events: list[AudioEvent]) -> EventList:
+        """Create a new EventList sharing this list's metadata.
+
+        Args:
+            events: New events list.
+
+        Returns:
+            New EventList with the same audio_path, duration_ms, and class_names.
+
+        """
+        return EventList(
+            events=events,
+            audio_path=self.audio_path,
+            duration_ms=self.duration_ms,
+            class_names=self.class_names,
+        )
+
     def add(self, event: AudioEvent) -> None:
         """Add an event."""
         self.events.append(event)
@@ -202,12 +165,7 @@ class EventList:
 
         """
         filtered = [e for e in self.events if e.score >= min_score]
-        return EventList(
-            events=filtered,
-            audio_path=self.audio_path,
-            duration_ms=self.duration_ms,
-            class_names=self.class_names,
-        )
+        return self._with_events(filtered)
 
     def filter_by_class(self, class_ids: list[int]) -> EventList:
         """Filter events by class.
@@ -220,12 +178,7 @@ class EventList:
 
         """
         filtered = [e for e in self.events if e.class_id in class_ids]
-        return EventList(
-            events=filtered,
-            audio_path=self.audio_path,
-            duration_ms=self.duration_ms,
-            class_names=self.class_names,
-        )
+        return self._with_events(filtered)
 
     def filter_by_duration(
         self,
@@ -250,12 +203,7 @@ class EventList:
                 continue
             filtered.append(e)
 
-        return EventList(
-            events=filtered,
-            audio_path=self.audio_path,
-            duration_ms=self.duration_ms,
-            class_names=self.class_names,
-        )
+        return self._with_events(filtered)
 
     def sort_by_time(self) -> EventList:
         """Sort events by start time.
@@ -265,12 +213,7 @@ class EventList:
 
         """
         sorted_events = sorted(self.events, key=lambda e: e.start_ms)
-        return EventList(
-            events=sorted_events,
-            audio_path=self.audio_path,
-            duration_ms=self.duration_ms,
-            class_names=self.class_names,
-        )
+        return self._with_events(sorted_events)
 
     def sort_by_score(self, descending: bool = True) -> EventList:
         """Sort events by score.
@@ -287,12 +230,7 @@ class EventList:
             key=lambda e: e.score,
             reverse=descending,
         )
-        return EventList(
-            events=sorted_events,
-            audio_path=self.audio_path,
-            duration_ms=self.duration_ms,
-            class_names=self.class_names,
-        )
+        return self._with_events(sorted_events)
 
     def get_class_counts(self) -> dict[int, int]:
         """Get count of events per class.

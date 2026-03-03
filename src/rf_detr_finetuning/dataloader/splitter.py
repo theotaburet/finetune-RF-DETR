@@ -7,10 +7,9 @@ loader creation.
 
 from __future__ import annotations
 
-import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
-from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -95,7 +94,7 @@ def split_dataset(
 def create_stratified_split(
     dataset: Dataset,
     config: SplitConfig,
-    get_label_fn: Any | None = None,
+    get_label_fn: Callable[..., int] | None = None,
 ) -> tuple[Subset, Subset, Subset]:
     """Create stratified split preserving class distribution.
 
@@ -118,12 +117,9 @@ def create_stratified_split(
         if get_label_fn is not None:
             label = get_label_fn(dataset[i])
         else:
-            # Default: use first label from target
-            _, target = dataset[i]
-            if hasattr(target, "labels") and len(target.labels) > 0:
-                label = int(target.labels[0])
-            else:
-                label = -1  # No label
+            from rf_detr_finetuning.dataloader.utils import extract_default_label
+
+            label = extract_default_label(dataset[i])
         labels.append(label)
 
     labels = np.array(labels)
@@ -174,7 +170,7 @@ def create_train_val_test_loaders(
     config: SplitConfig,
     batch_size: int = 8,
     num_workers: int = 4,
-    collate_fn: Any | None = None,
+    collate_fn: Callable[..., Any] | None = None,
     pin_memory: bool = True,
     stratified: bool = False,
 ) -> tuple[DataLoader, DataLoader, DataLoader]:
@@ -227,81 +223,3 @@ def create_train_val_test_loaders(
     )
 
     return train_loader, val_loader, test_loader
-
-
-def split_coco_annotations(
-    annotation_file: str | Path,
-    output_dir: str | Path,
-    config: SplitConfig,
-) -> dict[str, Path]:
-    """Split COCO annotations into train/val/test files.
-
-    Creates separate annotation JSON files for each split,
-    maintaining image-annotation relationships.
-
-    Args:
-        annotation_file: Path to COCO annotations JSON.
-        output_dir: Directory for output files.
-        config: Split configuration.
-
-    Returns:
-        Dict mapping split name to output file path.
-
-    """
-    annotation_file = Path(annotation_file)
-    output_dir = Path(output_dir)
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    with open(annotation_file) as f:
-        coco_data = json.load(f)
-
-    images = coco_data["images"]
-    annotations = coco_data.get("annotations", [])
-    categories = coco_data.get("categories", [])
-
-    # Build image ID to annotations mapping
-    img_to_anns: dict[int, list[dict]] = {}
-    for ann in annotations:
-        img_id = ann["image_id"]
-        if img_id not in img_to_anns:
-            img_to_anns[img_id] = []
-        img_to_anns[img_id].append(ann)
-
-    # Shuffle images
-    rng = np.random.default_rng(config.seed)
-    image_indices = np.arange(len(images))
-    rng.shuffle(image_indices)
-
-    # Split
-    n = len(images)
-    n_train = int(n * config.train_ratio)
-    n_val = int(n * config.val_ratio)
-
-    split_indices = {
-        "train": image_indices[:n_train],
-        "valid": image_indices[n_train : n_train + n_val],
-        "test": image_indices[n_train + n_val :],
-    }
-
-    output_paths = {}
-
-    for split_name, indices in split_indices.items():
-        split_images = [images[i] for i in indices]
-        split_image_ids = {img["id"] for img in split_images}
-
-        split_annotations = [ann for ann in annotations if ann["image_id"] in split_image_ids]
-
-        split_data = {
-            "images": split_images,
-            "annotations": split_annotations,
-            "categories": categories,
-        }
-
-        output_path = output_dir / f"{split_name}_annotations.json"
-        with open(output_path, "w") as f:
-            json.dump(split_data, f, indent=2)
-
-        output_paths[split_name] = output_path
-        logger.info(f"{split_name}: {len(split_images)} images, {len(split_annotations)} annotations")
-
-    return output_paths

@@ -71,41 +71,6 @@ def resize_spectrogram(
         return spec
 
 
-def resize_spectrogram_full(
-    spec: np.ndarray,
-    target_width: int,
-    target_height: int,
-    order: int = 1,
-) -> np.ndarray:
-    """Resize spectrogram to target dimensions with full interpolation.
-
-    Unlike resize_spectrogram(), this interpolates both axes.
-    Use when time-stretching is acceptable (e.g., visualization).
-
-    Args:
-        spec: Spectrogram array (H, W)
-        target_width: Target width
-        target_height: Target height
-        order: Interpolation order
-
-    Returns:
-        Resized spectrogram
-
-    """
-    orig_h, orig_w = spec.shape[:2]
-
-    if orig_h == target_height and orig_w == target_width:
-        return spec
-
-    zoom_h = target_height / orig_h
-    zoom_w = target_width / orig_w
-
-    if spec.ndim == 2:
-        return zoom(spec, (zoom_h, zoom_w), order=order)
-    else:
-        return zoom(spec, (zoom_h, zoom_w, 1.0), order=order)
-
-
 def spectrogram_to_image_array(
     spec: np.ndarray,
     normalize: bool = True,
@@ -121,17 +86,11 @@ def spectrogram_to_image_array(
 
     """
     if normalize:
-        spec_min = spec.min()
-        spec_max = spec.max()
-        if spec_max > spec_min:
-            spec = (spec - spec_min) / (spec_max - spec_min)
-        else:
-            spec = np.zeros_like(spec)
-        spec = (spec * 255).astype(np.uint8)
+        spec = normalize_to_range(spec, 0.0, 255.0)
     else:
-        spec = np.clip(spec, 0, 255).astype(np.uint8)
+        spec = np.clip(spec, 0, 255)
 
-    return spec
+    return spec.astype(np.uint8)
 
 
 def normalize_to_range(
@@ -158,33 +117,6 @@ def normalize_to_range(
         return normalized * (out_max - out_min) + out_min
     else:
         return np.full_like(spec, (out_min + out_max) / 2)
-
-
-def apply_colormap(
-    spec: np.ndarray,
-    colormap: str = "viridis",
-) -> np.ndarray:
-    """Apply matplotlib colormap to spectrogram.
-
-    Args:
-        spec: Spectrogram array (H, W), expected 0-1 or will be normalized
-        colormap: Matplotlib colormap name
-
-    Returns:
-        RGB image array (H, W, 3) as uint8
-
-    """
-    import matplotlib.pyplot as plt
-
-    # Normalize if needed
-    if spec.max() > 1.0 or spec.min() < 0.0:
-        spec = normalize_to_range(spec, 0.0, 1.0)
-
-    cmap = plt.get_cmap(colormap)
-    rgba = cmap(spec)
-    rgb = (rgba[:, :, :3] * 255).astype(np.uint8)
-
-    return rgb
 
 
 def grayscale_to_rgb(spec: np.ndarray) -> np.ndarray:

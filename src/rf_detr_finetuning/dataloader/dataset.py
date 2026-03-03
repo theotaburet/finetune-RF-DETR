@@ -12,15 +12,50 @@ from __future__ import annotations
 import json
 import logging
 from bisect import bisect_right
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+if TYPE_CHECKING:
+    from rf_detr_finetuning.dataprocessor.chunker import AudioChunker
+
 logger = logging.getLogger(__name__)
+
+
+def _bboxes_to_detection_target(
+    bboxes: list[Any],
+    image_id: int,
+) -> DetectionTarget:
+    """Convert ChunkBbox objects to a DetectionTarget.
+
+    Args:
+        bboxes: List of ChunkBbox objects with x, y, width, height, category_id.
+        image_id: Unique identifier for the image.
+
+    Returns:
+        DetectionTarget with XYXY boxes and labels.
+
+    """
+    boxes = []
+    labels = []
+    for bbox in bboxes:
+        x, y, w, h = bbox.x, bbox.y, bbox.width, bbox.height
+        boxes.append([x, y, x + w, y + h])
+        labels.append(bbox.category_id)
+
+    boxes_tensor = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4))
+    labels_tensor = torch.tensor(labels, dtype=torch.int64) if labels else torch.zeros(0, dtype=torch.int64)
+
+    return DetectionTarget(
+        boxes=boxes_tensor,
+        labels=labels_tensor,
+        image_id=image_id,
+    )
 
 
 @dataclass
@@ -84,8 +119,8 @@ class COCOAudioDataset(Dataset):
         self,
         annotation_file: str | Path,
         image_dir: str | Path | None = None,
-        transform: Any | None = None,
-        target_transform: Any | None = None,
+        transform: Callable | None = None,
+        target_transform: Callable | None = None,
     ) -> None:
         """Initialize COCO detection dataset.
 
@@ -232,8 +267,8 @@ class AudioChunkDataset(Dataset):
         self,
         audio_files: list[str | Path],
         metadata_files: list[str | Path],
-        chunker: Any,  # AudioChunker
-        transform: Any | None = None,
+        chunker: AudioChunker,
+        transform: Callable | None = None,
     ) -> None:
         """Initialize audio chunk dataset.
 
@@ -322,22 +357,7 @@ class AudioChunkDataset(Dataset):
         image = self._spectrogram_to_tensor(chunk.spectrogram)
 
         # Convert bboxes to target
-        boxes = []
-        labels = []
-        for bbox in chunk.bboxes:
-            # COCO format: [x, y, width, height] -> XYXY
-            x, y, w, h = bbox.x, bbox.y, bbox.width, bbox.height
-            boxes.append([x, y, x + w, y + h])
-            labels.append(bbox.category_id)
-
-        boxes_tensor = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4))
-        labels_tensor = torch.tensor(labels, dtype=torch.int64) if labels else torch.zeros(0, dtype=torch.int64)
-
-        target = DetectionTarget(
-            boxes=boxes_tensor,
-            labels=labels_tensor,
-            image_id=idx,
-        )
+        target = _bboxes_to_detection_target(chunk.bboxes, image_id=idx)
 
         if self.transform is not None:
             image = self.transform(image)
@@ -387,7 +407,7 @@ class InMemoryChunkDataset(Dataset):
 
     chunks: list[tuple[np.ndarray, list[Any], dict]] = field(default_factory=list)
     class_names: list[str] = field(default_factory=list)
-    transform: Any | None = None
+    transform: Callable | None = None
 
     def __len__(self) -> int:
         """Return number of chunks."""
@@ -395,7 +415,7 @@ class InMemoryChunkDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[torch.Tensor, DetectionTarget]:
         """Get chunk and target."""
-        spectrogram, bboxes, metadata = self.chunks[idx]
+        spectrogram, bboxes, _metadata = self.chunks[idx]
 
         # Convert spectrogram to tensor
         from rf_detr_finetuning.dataprocessor import grayscale_to_rgb, normalize_to_range
@@ -405,21 +425,7 @@ class InMemoryChunkDataset(Dataset):
         tensor = torch.from_numpy(rgb.astype(np.float32) / 255.0).permute(2, 0, 1)
 
         # Convert bboxes
-        boxes = []
-        labels = []
-        for bbox in bboxes:
-            x, y, w, h = bbox.x, bbox.y, bbox.width, bbox.height
-            boxes.append([x, y, x + w, y + h])
-            labels.append(bbox.category_id)
-
-        boxes_tensor = torch.tensor(boxes, dtype=torch.float32) if boxes else torch.zeros((0, 4))
-        labels_tensor = torch.tensor(labels, dtype=torch.int64) if labels else torch.zeros(0, dtype=torch.int64)
-
-        target = DetectionTarget(
-            boxes=boxes_tensor,
-            labels=labels_tensor,
-            image_id=idx,
-        )
+        target = _bboxes_to_detection_target(bboxes, image_id=idx)
 
         if self.transform is not None:
             tensor = self.transform(tensor)
@@ -431,9 +437,9 @@ class InMemoryChunkDataset(Dataset):
         cls,
         audio_files: list[str | Path],
         metadata_files: list[str | Path],
-        chunker: Any,
+        chunker: AudioChunker,
         class_names: list[str] | None = None,
-        transform: Any | None = None,
+        transform: Callable | None = None,
     ) -> InMemoryChunkDataset:
         """Create dataset by processing audio files with a chunker.
 

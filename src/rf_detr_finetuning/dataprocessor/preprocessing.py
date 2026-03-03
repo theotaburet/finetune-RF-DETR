@@ -346,18 +346,12 @@ def normalize_spectrogram(
         Normalized spectrogram as uint8 (0-255)
 
     """
+    from rf_detr_finetuning.dataprocessor.normalization import normalize_to_range
+
     spec = apply_dynamic_range_compression(spectrogram, config)
 
     # Min-max normalization to 0-255
-    spec_min = spec.min()
-    spec_max = spec.max()
-
-    if spec_max > spec_min:
-        spec = (spec - spec_min) / (spec_max - spec_min)
-    else:
-        spec = np.zeros_like(spec)
-
-    return (spec * 255).astype(np.uint8)
+    return normalize_to_range(spec, 0.0, 255.0).astype(np.uint8)
 
 
 def compute_percentile_rms_db(
@@ -411,117 +405,3 @@ def compute_percentile_rms_db(
     percentile_rms = np.percentile(rms_arr, percentile * 100)
 
     return float(20 * np.log10(percentile_rms + eps))
-
-
-class AudioPreprocessor:
-    """High-level audio preprocessing interface.
-
-    Use this class for consistent preprocessing across training and inference.
-
-    Example:
-        >>> preprocessor = AudioPreprocessor.from_yaml("config/audio_chunking.yaml")
-        >>> audio_processed, metadata = preprocessor.process(audio, sample_rate)
-        >>> spec_normalized = preprocessor.normalize_spectrogram(spectrogram)
-
-    """
-
-    def __init__(self, config: PreprocessingConfig | None = None):
-        """Initialize preprocessor.
-
-        Args:
-            config: Preprocessing configuration. If None, uses defaults.
-
-        """
-        self.config = config or PreprocessingConfig()
-
-    @classmethod
-    def from_yaml(cls, yaml_path: Path | str) -> AudioPreprocessor:
-        """Create preprocessor from YAML config file.
-
-        Args:
-            yaml_path: Path to YAML config file.
-
-        Returns:
-            AudioPreprocessor instance.
-
-        """
-        config = PreprocessingConfig.from_yaml(yaml_path)
-        return cls(config)
-
-    @classmethod
-    def from_dict(cls, config_dict: dict[str, Any]) -> AudioPreprocessor:
-        """Create preprocessor from config dictionary.
-
-        Args:
-            config_dict: Configuration dictionary.
-
-        Returns:
-            AudioPreprocessor instance.
-
-        """
-        config = PreprocessingConfig.from_dict(config_dict)
-        return cls(config)
-
-    def process(
-        self,
-        audio: np.ndarray,
-        sample_rate: int,
-    ) -> tuple[np.ndarray, dict[str, Any]]:
-        """Process audio with full preprocessing pipeline.
-
-        Args:
-            audio: Audio waveform (1D numpy array).
-            sample_rate: Sample rate in Hz.
-
-        Returns:
-            Tuple of (processed_audio, metadata_dict).
-
-        """
-        return preprocess_audio(audio, sample_rate, self.config)
-
-    def normalize_spectrogram(self, spectrogram: np.ndarray) -> np.ndarray:
-        """Normalize spectrogram with dynamic range control.
-
-        Args:
-            spectrogram: Spectrogram array (H, W).
-
-        Returns:
-            Normalized spectrogram as uint8 (0-255).
-
-        """
-        return normalize_spectrogram(spectrogram, self.config.dynamic_range)
-
-    def __repr__(self) -> str:
-        """Return a concise string representation."""
-        agc_status = "enabled" if self.config.agc.enabled else "disabled"
-        return (
-            f"AudioPreprocessor(agc={agc_status}, "
-            f"target_db={self.config.agc.target_db:.1f}, "
-            f"top_db={self.config.dynamic_range.top_db:.0f})"
-        )
-
-
-def preprocess_for_inference(
-    audio: np.ndarray,
-    sample_rate: int,
-    config_path: Path | str | None = None,
-) -> tuple[np.ndarray, dict[str, Any]]:
-    """Preprocess audio for inference using config file.
-
-    Convenience function for inference pipelines.
-
-    Args:
-        audio: Audio waveform (1D numpy array).
-        sample_rate: Sample rate in Hz.
-        config_path: Path to config YAML. If None, uses defaults.
-
-    Returns:
-        Tuple of (processed_audio, metadata_dict).
-
-    """
-    if config_path:
-        preprocessor = AudioPreprocessor.from_yaml(config_path)
-    else:
-        preprocessor = AudioPreprocessor()
-
-    return preprocessor.process(audio, sample_rate)

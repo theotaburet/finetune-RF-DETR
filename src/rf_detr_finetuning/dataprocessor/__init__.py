@@ -44,12 +44,10 @@ from rf_detr_finetuning.dataprocessor.normalization import (
     grayscale_to_rgb,
     normalize_to_range,
     resize_spectrogram,
-    resize_spectrogram_full,
     spectrogram_to_image_array,
 )
 from rf_detr_finetuning.dataprocessor.preprocessing import (
     AGCConfig,
-    AudioPreprocessor,
     DynamicRangeConfig,
     PreprocessingConfig,
     apply_agc,
@@ -58,7 +56,6 @@ from rf_detr_finetuning.dataprocessor.preprocessing import (
     compute_percentile_rms_db,
     normalize_spectrogram,
     preprocess_audio,
-    preprocess_for_inference,
 )
 from rf_detr_finetuning.dataprocessor.visualization import (
     draw_bboxes_on_spectrogram,
@@ -73,13 +70,11 @@ __all__ = [
     "flip_spectrogram",
     # Preprocessing
     "AGCConfig",
-    "AudioPreprocessor",
     "DynamicRangeConfig",
     "PreprocessingConfig",
     "preprocess_audio",
     "normalize_spectrogram",
     "compute_percentile_rms_db",
-    "preprocess_for_inference",
     "apply_agc",
     "apply_detrend",
     "apply_preemphasis",
@@ -96,7 +91,6 @@ __all__ = [
     # Normalization
     "spectrogram_to_image_array",
     "resize_spectrogram",
-    "resize_spectrogram_full",
     "normalize_to_range",
     "grayscale_to_rgb",
     # Chunker

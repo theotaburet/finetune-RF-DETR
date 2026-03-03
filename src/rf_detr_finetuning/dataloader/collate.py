@@ -12,6 +12,7 @@ from typing import Any
 import torch
 
 from rf_detr_finetuning.dataloader.dataset import DetectionTarget
+from rf_detr_finetuning.dataloader.utils import NO_LABEL_SENTINEL
 
 
 def collate_detections(
@@ -91,7 +92,7 @@ def collate_with_targets(
     # Pad boxes and labels
     batch_size = len(batch)
     padded_boxes = torch.zeros(batch_size, max_boxes, 4)
-    padded_labels = torch.full((batch_size, max_boxes), -1, dtype=torch.int64)
+    padded_labels = torch.full((batch_size, max_boxes), NO_LABEL_SENTINEL, dtype=torch.int64)
 
     for i, (boxes, labels) in enumerate(zip(all_boxes, all_labels)):
         n = len(boxes)
@@ -107,45 +108,3 @@ def collate_with_targets(
     }
 
     return batched_images, batched_targets
-
-
-def collate_for_inference(
-    batch: list[torch.Tensor],
-) -> torch.Tensor:
-    """Simple collate for inference (images only).
-
-    Args:
-        batch: List of image tensors.
-
-    Returns:
-        Batched image tensor (B, C, H, W).
-
-    """
-    return torch.stack(batch, dim=0)
-
-
-def create_collate_fn(
-    mode: str = "list",
-    **kwargs: Any,
-) -> Any:
-    """Factory function to create appropriate collate function.
-
-    Args:
-        mode: Collate mode:
-            - "list": Returns targets as list of dicts (DETR-style)
-            - "padded": Returns padded target tensors
-            - "inference": Returns only images
-        **kwargs: Additional arguments passed to collate function.
-
-    Returns:
-        Collate function.
-
-    """
-    if mode == "list":
-        return collate_detections
-    elif mode == "padded":
-        return lambda batch: collate_with_targets(batch, **kwargs)
-    elif mode == "inference":
-        return collate_for_inference
-    else:
-        raise ValueError(f"Unknown collate mode: {mode}")

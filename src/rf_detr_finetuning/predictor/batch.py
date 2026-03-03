@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Iterator
 from pathlib import Path
 
 import numpy as np
@@ -88,24 +87,6 @@ class BatchPredictor:
                 results.append(result)
 
         return results
-
-    def predict_generator(
-        self,
-        images: Iterator[np.ndarray | str | Path],
-        confidence_threshold: float = 0.5,
-    ) -> Iterator[PredictionResult]:
-        """Lazily predict on image generator.
-
-        Args:
-            images: Iterator of images.
-            confidence_threshold: Minimum confidence.
-
-        Yields:
-            PredictionResult for each image.
-
-        """
-        for image in images:
-            yield self.predictor.predict(image, confidence_threshold)
 
 
 def predict_directory(

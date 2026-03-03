@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from rf_detr_finetuning.dataprocessor.preprocessing import (
     AGCConfig,
-    AudioPreprocessor,
     DynamicRangeConfig,
     PreprocessingConfig,
     apply_agc,
@@ -21,12 +20,10 @@ from rf_detr_finetuning.dataprocessor.preprocessing import (
     compute_percentile_rms_db,
     normalize_spectrogram,
     preprocess_audio,
-    preprocess_for_inference,
 )
 
 __all__ = [
     "AGCConfig",
-    "AudioPreprocessor",
     "DynamicRangeConfig",
     "PreprocessingConfig",
     "apply_agc",
@@ -36,5 +33,4 @@ __all__ = [
     "compute_percentile_rms_db",
     "normalize_spectrogram",
     "preprocess_audio",
-    "preprocess_for_inference",
 ]

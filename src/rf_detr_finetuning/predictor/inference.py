@@ -75,14 +75,6 @@ class Detection:
         """Bounding box area."""
         return self.width * self.height
 
-    def to_coco(self) -> dict[str, Any]:
-        """Convert to COCO annotation format."""
-        return {
-            "bbox": [self.x1, self.y1, self.width, self.height],
-            "score": self.score,
-            "category_id": self.class_id,
-        }
-
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
@@ -148,31 +140,6 @@ class PredictionResult:
             image_id=self.image_id,
             image_path=self.image_path,
             metadata=self.metadata,
-        )
-
-    def to_supervision(self) -> Any:
-        """Convert to supervision Detections format.
-
-        Returns:
-            supervision.Detections object.
-
-        """
-        try:
-            import supervision as sv
-        except ImportError:
-            raise ImportError("supervision package required: pip install supervision")
-
-        if not self.detections:
-            return sv.Detections.empty()
-
-        xyxy = np.array([d.bbox for d in self.detections])
-        confidence = np.array([d.score for d in self.detections])
-        class_id = np.array([d.class_id for d in self.detections])
-
-        return sv.Detections(
-            xyxy=xyxy,
-            confidence=confidence,
-            class_id=class_id,
         )
 
 
@@ -304,41 +271,6 @@ class Predictor:
 
         return detections
 
-    @classmethod
-    def from_checkpoint(
-        cls,
-        checkpoint_path: str | Path,
-        model_class: type,
-        device: str = "cuda",
-        class_names: list[str] | None = None,
-        **model_kwargs: Any,
-    ) -> Predictor:
-        """Create predictor from checkpoint.
-
-        Args:
-            checkpoint_path: Path to model checkpoint.
-            model_class: Model class to instantiate.
-            device: Inference device.
-            class_names: Optional class names.
-            **model_kwargs: Arguments for model construction.
-
-        Returns:
-            Predictor instance.
-
-        """
-        checkpoint = torch.load(checkpoint_path, map_location="cpu", weights_only=True)
-
-        model = model_class(**model_kwargs)
-
-        if "model_state_dict" in checkpoint:
-            model.load_state_dict(checkpoint["model_state_dict"])
-        elif "model" in checkpoint:
-            model.load_state_dict(checkpoint["model"])
-        else:
-            model.load_state_dict(checkpoint)
-
-        return cls(model=model, device=device, class_names=class_names)
-
 
 class RFDETRPredictor(Predictor):
     """RF-DETR specific predictor.
@@ -371,7 +303,6 @@ class RFDETRPredictor(Predictor):
         """
         self.model_size = model_size
         self.weights_path = weights_path
-        self._class_names = class_names
 
         # Load RF-DETR model
         self._rfdetr_model = self._load_model()
@@ -380,7 +311,6 @@ class RFDETRPredictor(Predictor):
         # because the rfdetr library manages its own model/device lifecycle
         self.class_names = class_names
         self.device = torch.device(device)
-        self._class_names = class_names
 
     def _load_model(self) -> Any:
         """Load RF-DETR model."""
@@ -437,8 +367,8 @@ class RFDETRPredictor(Predictor):
                 class_id = results.class_id[i] if hasattr(results, "class_id") else 0
 
                 class_name = None
-                if self._class_names and class_id < len(self._class_names):
-                    class_name = self._class_names[class_id]
+                if self.class_names and class_id < len(self.class_names):
+                    class_name = self.class_names[class_id]
 
                 detections.append(
                     Detection(
@@ -453,20 +383,3 @@ class RFDETRPredictor(Predictor):
             detections=detections,
             image_path=str(image) if isinstance(image, str | Path) else None,
         )
-
-    def predict_batch(
-        self,
-        images: list[np.ndarray | str | Path],
-        confidence_threshold: float = 0.5,
-    ) -> list[PredictionResult]:
-        """Run inference on multiple images.
-
-        Args:
-            images: List of images or paths.
-            confidence_threshold: Minimum confidence.
-
-        Returns:
-            List of PredictionResults.
-
-        """
-        return [self.predict(img, confidence_threshold) for img in images]

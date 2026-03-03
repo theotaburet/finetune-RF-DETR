@@ -306,6 +306,22 @@ class Trainer:
 
         return total_loss / max(num_batches, 1)
 
+    def _targets_to_device(self, targets: Any) -> Any:
+        """Move targets (list of dicts or dict) to the training device.
+
+        Args:
+            targets: Batch targets from the data loader.
+
+        Returns:
+            Targets with all tensors moved to self.device.
+
+        """
+        if isinstance(targets, list):
+            return [{k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets]
+        if isinstance(targets, dict):
+            return {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in targets.items()}
+        return targets
+
     def _train_step(self, batch: Any, batch_idx: int) -> float:
         """Single training step.
 
@@ -320,14 +336,7 @@ class Trainer:
         # Unpack batch
         images, targets = batch
         images = images.to(self.device)
-
-        # Move targets to device
-        if isinstance(targets, list):
-            targets = [
-                {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets
-            ]
-        elif isinstance(targets, dict):
-            targets = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in targets.items()}
+        targets = self._targets_to_device(targets)
 
         # Forward pass with optional AMP
         if self.config.mixed_precision:
@@ -383,11 +392,11 @@ class Trainer:
         return loss.item() * self.config.accumulate_grad_batches
 
     @torch.no_grad()
-    def _validate_epoch(self, epoch: int) -> float:
+    def _validate_epoch(self, _epoch: int) -> float:
         """Run validation epoch.
 
         Args:
-            epoch: Current epoch number.
+            _epoch: Current epoch number (unused, kept for API symmetry with ``_train_epoch``).
 
         Returns:
             Average validation loss.
@@ -400,14 +409,7 @@ class Trainer:
         for batch in self.val_loader:
             images, targets = batch
             images = images.to(self.device)
-
-            # Move targets to device
-            if isinstance(targets, list):
-                targets = [
-                    {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in t.items()} for t in targets
-                ]
-            elif isinstance(targets, dict):
-                targets = {k: v.to(self.device) if isinstance(v, torch.Tensor) else v for k, v in targets.items()}
+            targets = self._targets_to_device(targets)
 
             # Forward pass
             if self.loss_fn is not None:
