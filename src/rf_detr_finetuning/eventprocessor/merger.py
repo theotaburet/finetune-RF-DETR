@@ -1,7 +1,8 @@
 """Event merging strategies.
 
 Provides algorithms for merging overlapping detections:
-- NMS-based merging
+- Cluster-based merging (Union-Find) with 2D time-frequency IoU
+- NMS-based merging (greedy, legacy)
 - Temporal IoU merging
 
 """
@@ -17,6 +18,39 @@ from rf_detr_finetuning.eventprocessor.event import AudioEvent, EventList
 logger = logging.getLogger(__name__)
 
 
+class _UnionFind:
+    """Union-Find (disjoint set) data structure for clustering events."""
+
+    def __init__(self, n: int) -> None:
+        self.parent = list(range(n))
+        self.rank = [0] * n
+
+    def find(self, x: int) -> int:
+        """Find root with path compression."""
+        if self.parent[x] != x:
+            self.parent[x] = self.find(self.parent[x])
+        return self.parent[x]
+
+    def union(self, x: int, y: int) -> None:
+        """Union by rank."""
+        rx, ry = self.find(x), self.find(y)
+        if rx == ry:
+            return
+        if self.rank[rx] < self.rank[ry]:
+            rx, ry = ry, rx
+        self.parent[ry] = rx
+        if self.rank[rx] == self.rank[ry]:
+            self.rank[rx] += 1
+
+    def clusters(self) -> dict[int, list[int]]:
+        """Return mapping from root -> list of member indices."""
+        groups: dict[int, list[int]] = {}
+        for i in range(len(self.parent)):
+            root = self.find(i)
+            groups.setdefault(root, []).append(i)
+        return groups
+
+
 @dataclass
 class MergeConfig:
     """Configuration for event merging.
@@ -27,6 +61,7 @@ class MergeConfig:
         merge_same_class_only: Only merge events of same class.
         merge_strategy: How to combine scores ('max', 'avg', 'sum').
         gap_tolerance_ms: Merge events within this gap (temporal).
+        use_2d_iou: Use 2D time-frequency IoU instead of temporal-only.
 
     """
 
@@ -35,10 +70,15 @@ class MergeConfig:
     merge_same_class_only: bool = True
     merge_strategy: Literal["max", "avg", "sum"] = "max"
     gap_tolerance_ms: float = 0.0
+    use_2d_iou: bool = True
 
 
 class EventMerger:
-    """Merges overlapping audio events.
+    """Merges overlapping audio events using Union-Find clustering.
+
+    Uses transitive clustering: if event A overlaps B and B overlaps C,
+    all three are merged into a single event. This correctly handles
+    long events detected across multiple overlapping windows.
 
     Args:
         config: Merge configuration.
@@ -55,7 +95,7 @@ class EventMerger:
         self.config = config or MergeConfig()
 
     def merge(self, events: EventList) -> EventList:
-        """Merge overlapping events.
+        """Merge overlapping events using Union-Find clustering.
 
         Args:
             events: Input event list.
@@ -67,42 +107,21 @@ class EventMerger:
         if len(events) == 0:
             return events
 
-        # Sort by score (descending) for greedy NMS
-        sorted_events = events.sort_by_score(descending=True).events
+        event_list = list(events)
+        n = len(event_list)
+        uf = _UnionFind(n)
 
+        # Build connectivity graph: union events that should merge
+        for i in range(n):
+            for j in range(i + 1, n):
+                if self._should_merge(event_list[i], event_list[j]):
+                    uf.union(i, j)
+
+        # Merge each cluster
         merged = []
-        suppressed = set()
-
-        for i, event in enumerate(sorted_events):
-            if i in suppressed:
-                continue
-
-            # Find all overlapping events
-            to_merge = [event]
-            for j, other in enumerate(sorted_events[i + 1 :], start=i + 1):
-                if j in suppressed:
-                    continue
-
-                # Check class constraint
-                if self.config.merge_same_class_only and event.class_id != other.class_id:
-                    continue
-
-                # Check IoU overlap
-                iou = event.temporal_iou(other)
-                if iou >= self.config.iou_threshold:
-                    to_merge.append(other)
-                    suppressed.add(j)
-
-                # Check gap tolerance (for temporal merging)
-                elif self.config.gap_tolerance_ms > 0:
-                    gap = self._compute_gap(event, other)
-                    if gap <= self.config.gap_tolerance_ms:
-                        to_merge.append(other)
-                        suppressed.add(j)
-
-            # Merge the group
-            merged_event = self._merge_group(to_merge)
-            merged.append(merged_event)
+        for indices in uf.clusters().values():
+            group = [event_list[i] for i in indices]
+            merged.append(self._merge_group(group))
 
         result = EventList(
             events=merged,
@@ -117,6 +136,44 @@ class EventMerger:
 
         return result.sort_by_time()
 
+    def _should_merge(self, a: AudioEvent, b: AudioEvent) -> bool:
+        """Determine whether two events should be merged.
+
+        Args:
+            a: First event.
+            b: Second event.
+
+        Returns:
+            True if the events should be merged.
+
+        """
+        # Check class constraint
+        if self.config.merge_same_class_only and a.class_id != b.class_id:
+            return False
+
+        # Check IoU overlap (2D or temporal-only)
+        if self.config.use_2d_iou:
+            iou = a.temporal_frequency_iou(b)
+        else:
+            iou = a.temporal_iou(b)
+
+        # Use strict > 0 when threshold is 0.0 to avoid merging
+        # non-overlapping events; otherwise use >= threshold.
+        if self.config.iou_threshold > 0:
+            if iou >= self.config.iou_threshold:
+                return True
+        else:
+            if iou > 0:
+                return True
+
+        # Check gap tolerance (temporal proximity without overlap)
+        if self.config.gap_tolerance_ms > 0:
+            gap = self._compute_gap(a, b)
+            if gap <= self.config.gap_tolerance_ms:
+                return True
+
+        return False
+
     def _compute_gap(self, a: AudioEvent, b: AudioEvent) -> float:
         """Compute temporal gap between events.
 
@@ -125,7 +182,7 @@ class EventMerger:
             b: Second event.
 
         Returns:
-            Gap in milliseconds (negative if overlapping).
+            Gap in milliseconds (0 if overlapping).
 
         """
         if a.end_ms <= b.start_ms:
@@ -133,7 +190,7 @@ class EventMerger:
         elif b.end_ms <= a.start_ms:
             return a.start_ms - b.end_ms
         else:
-            return 0.0  # Overlapping
+            return 0.0
 
     def _merge_group(self, events: list[AudioEvent]) -> AudioEvent:
         """Merge a group of overlapping events.
@@ -167,7 +224,7 @@ class EventMerger:
         best_event = max(events, key=lambda e: e.score)
 
         # Merge source windows
-        all_windows = []
+        all_windows: list[int] = []
         for e in events:
             all_windows.extend(e.source_windows)
 
@@ -189,7 +246,7 @@ class EventMerger:
             score=score,
             min_freq_hz=min_freq,
             max_freq_hz=max_freq,
-            source_windows=list(set(all_windows)),
+            source_windows=sorted(set(all_windows)),
             metadata={"merged_count": len(events)},
         )
 
@@ -198,15 +255,19 @@ def nms_merge(
     events: EventList,
     iou_threshold: float = 0.5,
     score_threshold: float = 0.0,
+    use_2d_iou: bool = True,
 ) -> EventList:
-    """Apply NMS-style merging to events.
+    """Apply cluster-based merging to events.
 
-    Standard greedy NMS that suppresses overlapping lower-confidence events.
+    Unlike traditional greedy NMS, this uses Union-Find to transitively
+    merge all connected events, which correctly handles long events
+    detected across multiple overlapping windows.
 
     Args:
         events: Input events.
-        iou_threshold: IoU threshold for suppression.
+        iou_threshold: IoU threshold for merging.
         score_threshold: Minimum score to keep.
+        use_2d_iou: Use 2D time-frequency IoU.
 
     Returns:
         Merged events.
@@ -216,6 +277,7 @@ def nms_merge(
         iou_threshold=iou_threshold,
         score_threshold=score_threshold,
         merge_strategy="max",
+        use_2d_iou=use_2d_iou,
     )
     merger = EventMerger(config)
     return merger.merge(events)
@@ -240,10 +302,50 @@ def temporal_merge(
 
     """
     config = MergeConfig(
-        iou_threshold=0.0,  # Don't require overlap
+        iou_threshold=0.0,
         gap_tolerance_ms=gap_tolerance_ms,
         merge_same_class_only=merge_same_class_only,
         merge_strategy="avg",
+        use_2d_iou=False,
+    )
+    merger = EventMerger(config)
+    return merger.merge(events)
+
+
+def cluster_merge(
+    events: EventList,
+    iou_threshold: float = 0.3,
+    gap_tolerance_ms: float = 0.0,
+    merge_same_class_only: bool = True,
+    use_2d_iou: bool = True,
+) -> EventList:
+    """Merge overlapping events using transitive clustering.
+
+    Designed for merging detections from overlapping spectrogram windows.
+    Uses Union-Find to build clusters where events are connected if they
+    share sufficient IoU overlap or are within a temporal gap.
+
+    This handles the chain case correctly: if window 1 detects 1000-3200ms,
+    window 2 detects 2560-5760ms, and window 3 detects 5120-6500ms, all three
+    are transitively merged into a single event spanning 1000-6500ms.
+
+    Args:
+        events: Input events.
+        iou_threshold: IoU threshold for connecting events.
+        gap_tolerance_ms: Additional gap tolerance for bridging.
+        merge_same_class_only: Only merge events of the same class.
+        use_2d_iou: Use 2D time-frequency IoU (recommended).
+
+    Returns:
+        Merged events sorted by time.
+
+    """
+    config = MergeConfig(
+        iou_threshold=iou_threshold,
+        gap_tolerance_ms=gap_tolerance_ms,
+        merge_same_class_only=merge_same_class_only,
+        merge_strategy="max",
+        use_2d_iou=use_2d_iou,
     )
     merger = EventMerger(config)
     return merger.merge(events)

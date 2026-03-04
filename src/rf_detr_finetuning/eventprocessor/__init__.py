@@ -16,6 +16,7 @@ from rf_detr_finetuning.eventprocessor.event import (
 from rf_detr_finetuning.eventprocessor.merger import (
     EventMerger,
     MergeConfig,
+    cluster_merge,
     nms_merge,
     temporal_merge,
 )
@@ -32,6 +33,7 @@ __all__ = [
     # Merging
     "MergeConfig",
     "EventMerger",
+    "cluster_merge",
     "nms_merge",
     "temporal_merge",
     # Post-processing

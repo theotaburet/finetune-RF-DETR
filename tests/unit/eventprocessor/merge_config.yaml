@@ -1,0 +1,29 @@
+# Merge configuration for event merger integration tests.
+#
+# These parameters are passed to cluster_merge() in each _run_scenario call
+# unless the scenario overrides them explicitly (e.g. use_2d_iou, gap_tolerance_ms).
+
+merge:
+  # IoU threshold for connecting two detections into the same cluster.
+  # Lower values merge more aggressively; 0.05 works well for overlapping windows.
+  iou_threshold: 0.05
+
+  # Only merge detections that share the same class_id.
+  merge_same_class_only: true
+
+  # How to combine confidence scores for merged events: "max", "avg", or "sum".
+  merge_strategy: max
+
+  # Use 2D time-frequency IoU (recommended). Set to false for temporal-only.
+  use_2d_iou: true
+
+  # Additional temporal gap tolerance in ms. Events within this gap are merged
+  # even without IoU overlap. 0 disables gap-based merging.
+  gap_tolerance_ms: 0.0
+
+  # Minimum confidence score to keep an event after merging (0 = keep all).
+  score_threshold: 0.0
+
+spectrogram:
+  # Number of mel frequency bins for debug plot spectrograms.
+  n_mels: 128

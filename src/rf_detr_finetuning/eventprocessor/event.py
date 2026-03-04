@@ -73,6 +73,52 @@ class AudioEvent:
 
         return intersection / union
 
+    def temporal_frequency_iou(self, other: AudioEvent) -> float:
+        """Compute 2D IoU over both time and frequency axes.
+
+        Uses the product of temporal and frequency extents as the "area"
+        of each event, computing a true 2D intersection-over-union.
+        Falls back to temporal-only IoU if either event lacks frequency info.
+
+        Args:
+            other: Another AudioEvent.
+
+        Returns:
+            2D Intersection over Union (0-1).
+
+        """
+        # Fall back to temporal IoU if frequency info is missing
+        if (
+            self.min_freq_hz is None
+            or self.max_freq_hz is None
+            or other.min_freq_hz is None
+            or other.max_freq_hz is None
+        ):
+            return self.temporal_iou(other)
+
+        # Temporal intersection
+        t_inter_start = max(self.start_ms, other.start_ms)
+        t_inter_end = min(self.end_ms, other.end_ms)
+        t_intersection = max(0.0, t_inter_end - t_inter_start)
+
+        # Frequency intersection
+        f_inter_start = max(self.min_freq_hz, other.min_freq_hz)
+        f_inter_end = min(self.max_freq_hz, other.max_freq_hz)
+        f_intersection = max(0.0, f_inter_end - f_inter_start)
+
+        intersection_area = t_intersection * f_intersection
+
+        # Areas
+        self_area = self.duration_ms * (self.max_freq_hz - self.min_freq_hz)
+        other_area = other.duration_ms * (other.max_freq_hz - other.min_freq_hz)
+
+        union_area = self_area + other_area - intersection_area
+
+        if union_area <= 0:
+            return 0.0
+
+        return intersection_area / union_area
+
     def to_dict(self) -> dict[str, Any]:
         """Convert to dictionary."""
         return {
