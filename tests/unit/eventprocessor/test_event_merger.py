@@ -32,7 +32,7 @@ from rf_detr_finetuning.eventprocessor.merger import (
 logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = Path("output/test_merge_debug")
-_CONFIG_PATH = Path(__file__).parent / "merge_config.yaml"
+_CONFIG_PATH = Path(__file__).parents[3] / "config" / "merge_config.yaml"
 
 
 def _load_merge_config() -> dict:
