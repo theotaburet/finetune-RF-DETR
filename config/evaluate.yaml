@@ -1,0 +1,28 @@
+# Evaluation Step Configuration
+#
+# Runs inference on the test split and computes COCO detection metrics (mAP).
+#
+# Usage:
+#   Loaded automatically by the pipeline when the evaluate step is enabled.
+
+# Path to the model checkpoint to evaluate
+weights: output/checkpoint_best.pth
+
+# Directory containing test images and _annotations.coco.json
+test_dir: data/split_dataset/test
+
+# Output directory for evaluation results and optional visualizations
+output_dir: output/eval
+
+# Detections below this confidence score are discarded
+confidence_threshold: 0.5
+
+# IoU threshold for mAP computation
+iou_threshold: 0.5
+
+# Save annotated images showing predictions vs ground truth
+save_visualizations: true
+
+# RF-DETR model size used during training (must match the checkpoint)
+# Options: base, large
+model_size: base

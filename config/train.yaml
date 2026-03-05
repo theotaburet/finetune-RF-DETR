@@ -1,0 +1,36 @@
+# Training Step Configuration
+#
+# Fine-tunes RF-DETR on a split COCO dataset produced by the split step.
+#
+# Usage:
+#   Loaded automatically by the pipeline when the train step is enabled.
+
+# Directory containing train/, valid/, test/ splits with _annotations.coco.json
+dataset_dir: data/split_dataset
+
+# Output directory for checkpoints and training artefacts
+output_dir: output
+
+# Model size: 'base' or 'large'
+model_size: base
+
+# Path to pretrained weights to start from (null = ImageNet pretrained)
+pretrained_weights: null
+
+# Training hyperparameters
+epochs: 5
+batch_size: 8
+learning_rate: 0.0001
+num_workers: 4
+
+# Device: 'cuda', 'cpu', or 'mps'
+device: cuda
+
+# Resume training from a checkpoint (null = start fresh)
+resume_from: null
+
+# Stop training if validation metric does not improve for this many epochs
+early_stopping_patience: 10
+
+# Save a checkpoint every N epochs (in addition to best checkpoint)
+save_every_n_epochs: 5

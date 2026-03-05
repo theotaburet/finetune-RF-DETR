@@ -1,0 +1,31 @@
+# Preprocessing Step Configuration
+#
+# Converts raw audio files into spectrogram image chunks with COCO annotations.
+# Pairs each audio file with a matching JSON metadata file containing event labels.
+#
+# Usage:
+#   Loaded automatically by the pipeline when the preprocess step is enabled.
+
+# Input audio directory
+audio_dir: /mnt/d/SoundBase/Sounds/SDK_test
+
+# Metadata directory (JSON label files; also searched alongside audio files)
+metadata_dir: /mnt/d/SoundBase/Sounds/SDK_test
+
+# Output directory for spectrogram images and COCO annotations
+output_dir: data/processed
+
+# Path to the audio chunking / spectrogram configuration
+chunking_config: config/audio_chunking.yaml
+
+# Audio file extensions to scan for
+extensions: [.flac, .wav, .mp3]
+
+# Search subdirectories recursively
+recursive: true
+
+# Save debug visualizations with bounding boxes overlaid (slows processing)
+debug_visualize: false
+
+# Maximum number of audio files to process (null = all)
+max_files: null

@@ -1,0 +1,37 @@
+# Inference Step Configuration
+#
+# Runs the trained model on new audio files and outputs detected events.
+#
+# Usage:
+#   Loaded automatically by the pipeline when the infer step is enabled.
+
+# Path to the trained model checkpoint
+weights: output/checkpoint_best.pth
+
+# Directory containing audio files to run inference on
+audio_dir: data/inference
+
+# Output directory for detection results
+output_dir: output/predictions
+
+# Path to the audio chunking / spectrogram configuration (must match training)
+chunking_config: config/audio_chunking.yaml
+
+# Audio file extensions to scan for
+extensions: [.flac, .wav, .mp3]
+
+# Search subdirectories recursively
+recursive: true
+
+# Detections below this confidence score are discarded
+confidence_threshold: 0.5
+
+# Merge nearby events within this gap (milliseconds) into a single event
+merge_gap_ms: 100.0
+
+# Output format for detection results: 'json', 'csv', or 'raven'
+output_format: json
+
+# RF-DETR model size used during training (must match the checkpoint)
+# Options: base, large
+model_size: base

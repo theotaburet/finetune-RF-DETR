@@ -68,11 +68,7 @@ console = Console()
 
 @dataclass
 class DownloadConfig:
-    """Download step configuration.
-
-    Wraps the run_download_data.DownloadConfig as a pipeline step.
-
-    """
+    """Pipeline-level download step configuration."""
 
     enabled: bool = False
     config_file: str = "config/download.yaml"
@@ -82,24 +78,74 @@ class DownloadConfig:
 
 @dataclass
 class PreprocessConfig:
-    """Preprocessing step configuration."""
+    """Pipeline-level preprocess step configuration."""
 
-    enabled: bool = True
+    enabled: bool = False
+    config_file: str = "config/preprocess.yaml"
+
+
+@dataclass
+class SplitConfig:
+    """Pipeline-level split step configuration."""
+
+    enabled: bool = False
+    config_file: str = "config/split.yaml"
+
+
+@dataclass
+class TrainConfig:
+    """Pipeline-level train step configuration."""
+
+    enabled: bool = False
+    config_file: str = "config/train.yaml"
+
+
+@dataclass
+class EvaluateConfig:
+    """Pipeline-level evaluate step configuration."""
+
+    enabled: bool = False
+    config_file: str = "config/evaluate.yaml"
+
+
+@dataclass
+class InferConfig:
+    """Pipeline-level infer step configuration."""
+
+    enabled: bool = False
+    config_file: str = "config/infer.yaml"
+
+
+# ---------------------------------------------------------------------------
+# Backing config dataclasses (loaded from each step's own config file)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PreprocessStepConfig:
+    """Full preprocessing configuration loaded from config/preprocess.yaml."""
+
     audio_dir: str = "data/audio"
     metadata_dir: str = "data/metadata"
     output_dir: str = "data/processed"
     chunking_config: str = "config/audio_chunking.yaml"
     extensions: list[str] = field(default_factory=lambda: [".flac", ".wav", ".mp3"])
-    recursive: bool = True  # Search subdirectories for audio files
+    recursive: bool = True
     debug_visualize: bool = False
     max_files: int | None = None
 
+    @classmethod
+    def from_yaml(cls, path: Path) -> PreprocessStepConfig:
+        """Load from YAML file."""
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
 
 @dataclass
-class SplitConfig:
-    """Dataset splitting configuration."""
+class SplitStepConfig:
+    """Full split configuration loaded from config/split.yaml."""
 
-    enabled: bool = True
     input_dir: str = "data/processed"
     output_dir: str = "data/split_dataset"
     train_ratio: float = 0.7
@@ -121,12 +167,18 @@ class SplitConfig:
         if abs(total - 1.0) > 1e-6:
             raise ValueError(f"Split ratios must sum to 1.0, got {total:.4f}")
 
+    @classmethod
+    def from_yaml(cls, path: Path) -> SplitStepConfig:
+        """Load from YAML file."""
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
 
 @dataclass
-class TrainConfig:
-    """Training step configuration."""
+class TrainStepConfig:
+    """Full training configuration loaded from config/train.yaml."""
 
-    enabled: bool = True
     dataset_dir: str = "data/split_dataset"
     output_dir: str = "output"
     model_size: str = "base"
@@ -140,34 +192,55 @@ class TrainConfig:
     early_stopping_patience: int = 10
     save_every_n_epochs: int = 5
 
+    @classmethod
+    def from_yaml(cls, path: Path) -> TrainStepConfig:
+        """Load from YAML file."""
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
+
 
 @dataclass
-class EvaluateConfig:
-    """Evaluation step configuration."""
+class EvaluateStepConfig:
+    """Full evaluation configuration loaded from config/evaluate.yaml."""
 
-    enabled: bool = False
     weights: str = "output/checkpoint_best.pth"
     test_dir: str = "data/split_dataset/test"
     output_dir: str = "output/eval"
     confidence_threshold: float = 0.5
     iou_threshold: float = 0.5
     save_visualizations: bool = True
+    model_size: str = "base"
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> EvaluateStepConfig:
+        """Load from YAML file."""
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
 @dataclass
-class InferConfig:
-    """Inference step configuration."""
+class InferStepConfig:
+    """Full inference configuration loaded from config/infer.yaml."""
 
-    enabled: bool = False
     weights: str = "output/checkpoint_best.pth"
     audio_dir: str = "data/inference"
     output_dir: str = "output/predictions"
     chunking_config: str = "config/audio_chunking.yaml"
     extensions: list[str] = field(default_factory=lambda: [".flac", ".wav", ".mp3"])
-    recursive: bool = True  # Search subdirectories for audio files
+    recursive: bool = True
     confidence_threshold: float = 0.5
     merge_gap_ms: float = 100.0
-    output_format: str = "json"  # json, csv, raven
+    output_format: str = "json"
+    model_size: str = "base"
+
+    @classmethod
+    def from_yaml(cls, path: Path) -> InferStepConfig:
+        """Load from YAML file."""
+        with open(path) as f:
+            data = yaml.safe_load(f)
+        return cls(**{k: v for k, v in data.items() if k in cls.__dataclass_fields__})
 
 
 @dataclass
@@ -203,7 +276,7 @@ class PipelineConfig:
         config.class_names = data.get("class_names", config.class_names)
         config.classes_file = data.get("classes_file", config.classes_file)
 
-        # Step configs
+        # Step configs (slim wrappers: only enabled + config_file)
         if "download" in data:
             config.download = DownloadConfig(**data["download"])
         if "preprocess" in data:
@@ -234,60 +307,23 @@ class PipelineConfig:
             },
             "preprocess": {
                 "enabled": self.preprocess.enabled,
-                "audio_dir": self.preprocess.audio_dir,
-                "metadata_dir": self.preprocess.metadata_dir,
-                "output_dir": self.preprocess.output_dir,
-                "chunking_config": self.preprocess.chunking_config,
-                "extensions": self.preprocess.extensions,
-                "recursive": self.preprocess.recursive,
-                "debug_visualize": self.preprocess.debug_visualize,
-                "max_files": self.preprocess.max_files,
+                "config_file": self.preprocess.config_file,
             },
             "split": {
                 "enabled": self.split.enabled,
-                "input_dir": self.split.input_dir,
-                "output_dir": self.split.output_dir,
-                "train_ratio": self.split.train_ratio,
-                "val_ratio": self.split.val_ratio,
-                "test_ratio": self.split.test_ratio,
-                "seed": self.split.seed,
-                "stratify": self.split.stratify,
+                "config_file": self.split.config_file,
             },
             "train": {
                 "enabled": self.train.enabled,
-                "dataset_dir": self.train.dataset_dir,
-                "output_dir": self.train.output_dir,
-                "model_size": self.train.model_size,
-                "pretrained_weights": self.train.pretrained_weights,
-                "epochs": self.train.epochs,
-                "batch_size": self.train.batch_size,
-                "learning_rate": self.train.learning_rate,
-                "num_workers": self.train.num_workers,
-                "device": self.train.device,
-                "resume_from": self.train.resume_from,
-                "early_stopping_patience": self.train.early_stopping_patience,
-                "save_every_n_epochs": self.train.save_every_n_epochs,
+                "config_file": self.train.config_file,
             },
             "evaluate": {
                 "enabled": self.evaluate.enabled,
-                "weights": self.evaluate.weights,
-                "test_dir": self.evaluate.test_dir,
-                "output_dir": self.evaluate.output_dir,
-                "confidence_threshold": self.evaluate.confidence_threshold,
-                "iou_threshold": self.evaluate.iou_threshold,
-                "save_visualizations": self.evaluate.save_visualizations,
+                "config_file": self.evaluate.config_file,
             },
             "infer": {
                 "enabled": self.infer.enabled,
-                "weights": self.infer.weights,
-                "audio_dir": self.infer.audio_dir,
-                "output_dir": self.infer.output_dir,
-                "chunking_config": self.infer.chunking_config,
-                "extensions": self.infer.extensions,
-                "recursive": self.infer.recursive,
-                "confidence_threshold": self.infer.confidence_threshold,
-                "merge_gap_ms": self.infer.merge_gap_ms,
-                "output_format": self.infer.output_format,
+                "config_file": self.infer.config_file,
             },
         }
 
@@ -583,6 +619,10 @@ class PreprocessStep(PipelineStep):
 
     name = "preprocess"
 
+    def _load_cfg(self) -> PreprocessStepConfig:
+        """Load the backing config from config_file."""
+        return PreprocessStepConfig.from_yaml(Path(self.config.preprocess.config_file))
+
     def validate(self) -> list[str]:
         """Validate preprocessing configuration.
 
@@ -591,7 +631,13 @@ class PreprocessStep(PipelineStep):
 
         """
         errors = []
-        cfg = self.config.preprocess
+        pipeline_cfg = self.config.preprocess
+
+        if not Path(pipeline_cfg.config_file).exists():
+            errors.append(f"Preprocess config not found: {pipeline_cfg.config_file}")
+            return errors
+
+        cfg = self._load_cfg()
 
         if not Path(cfg.audio_dir).exists():
             errors.append(f"Audio directory not found: {cfg.audio_dir}")
@@ -609,11 +655,9 @@ class PreprocessStep(PipelineStep):
             True if successful, False otherwise.
 
         """
-        cfg = self.config.preprocess
+        pipeline_cfg = self.config.preprocess
         console.print("\n[bold cyan]Step: Preprocessing[/bold cyan]")
-        console.print(f"  Audio dir: {cfg.audio_dir}")
-        console.print(f"  Metadata dir: {cfg.metadata_dir}")
-        console.print(f"  Output dir: {cfg.output_dir}")
+        console.print(f"  Config file: {pipeline_cfg.config_file}")
 
         if self.dry_run:
             report = self.dry_run_report()
@@ -622,6 +666,11 @@ class PreprocessStep(PipelineStep):
             for k, v in report.items():
                 console.print(f"    {k}: {v}")
             return True
+
+        cfg = self._load_cfg()
+        console.print(f"  Audio dir: {cfg.audio_dir}")
+        console.print(f"  Metadata dir: {cfg.metadata_dir}")
+        console.print(f"  Output dir: {cfg.output_dir}")
 
         try:
             import numpy as np
@@ -794,7 +843,11 @@ class PreprocessStep(PipelineStep):
 
     def dry_run_report(self) -> dict[str, Any]:
         """Report preprocessing plan."""
-        cfg = self.config.preprocess
+        pipeline_cfg = self.config.preprocess
+        if not Path(pipeline_cfg.config_file).exists():
+            return {"config_file": pipeline_cfg.config_file, "error": "config file not found"}
+
+        cfg = self._load_cfg()
         audio_dir = Path(cfg.audio_dir)
         metadata_dir = Path(cfg.metadata_dir)
 
@@ -809,6 +862,7 @@ class PreprocessStep(PipelineStep):
             metadata_count = len(list(metadata_dir.glob("**/*.json")))
 
         return {
+            "config_file": pipeline_cfg.config_file,
             "audio_files": audio_count,
             "metadata_files": metadata_count,
             "output_dir": cfg.output_dir,
@@ -822,6 +876,10 @@ class SplitStep(PipelineStep):
 
     name = "split"
 
+    def _load_cfg(self) -> SplitStepConfig:
+        """Load the backing config from config_file."""
+        return SplitStepConfig.from_yaml(Path(self.config.split.config_file))
+
     def validate(self) -> list[str]:
         """Validate split configuration.
 
@@ -830,7 +888,13 @@ class SplitStep(PipelineStep):
 
         """
         errors = []
-        cfg = self.config.split
+        pipeline_cfg = self.config.split
+
+        if not Path(pipeline_cfg.config_file).exists():
+            errors.append(f"Split config not found: {pipeline_cfg.config_file}")
+            return errors
+
+        cfg = self._load_cfg()
 
         input_dir = Path(cfg.input_dir)
         if not input_dir.exists():
@@ -847,7 +911,7 @@ class SplitStep(PipelineStep):
             True if successful, False otherwise.
 
         """
-        cfg = self.config.split
+        cfg = self._load_cfg()
         console.print("\n[bold cyan]Step: Dataset Splitting[/bold cyan]")
         console.print(f"  Input dir: {cfg.input_dir}")
         console.print(f"  Output dir: {cfg.output_dir}")
@@ -992,6 +1056,10 @@ class TrainStep(PipelineStep):
 
     name = "train"
 
+    def _load_cfg(self) -> TrainStepConfig:
+        """Load the backing config from config_file."""
+        return TrainStepConfig.from_yaml(Path(self.config.train.config_file))
+
     def validate(self) -> list[str]:
         """Validate training configuration.
 
@@ -1000,7 +1068,13 @@ class TrainStep(PipelineStep):
 
         """
         errors = []
-        cfg = self.config.train
+        pipeline_cfg = self.config.train
+
+        if not Path(pipeline_cfg.config_file).exists():
+            errors.append(f"Train config not found: {pipeline_cfg.config_file}")
+            return errors
+
+        cfg = self._load_cfg()
 
         dataset_dir = Path(cfg.dataset_dir)
         if not dataset_dir.exists():
@@ -1018,7 +1092,7 @@ class TrainStep(PipelineStep):
             True if successful, False otherwise.
 
         """
-        cfg = self.config.train
+        cfg = self._load_cfg()
         console.print("\n[bold cyan]Step: Training[/bold cyan]")
         console.print(f"  Dataset: {cfg.dataset_dir}")
         console.print(f"  Model: RF-DETR {cfg.model_size}")
@@ -1110,6 +1184,10 @@ class EvaluateStep(PipelineStep):
 
     name = "evaluate"
 
+    def _load_cfg(self) -> EvaluateStepConfig:
+        """Load the backing config from config_file."""
+        return EvaluateStepConfig.from_yaml(Path(self.config.evaluate.config_file))
+
     def validate(self) -> list[str]:
         """Validate evaluation configuration.
 
@@ -1118,7 +1196,13 @@ class EvaluateStep(PipelineStep):
 
         """
         errors = []
-        cfg = self.config.evaluate
+        pipeline_cfg = self.config.evaluate
+
+        if not Path(pipeline_cfg.config_file).exists():
+            errors.append(f"Evaluate config not found: {pipeline_cfg.config_file}")
+            return errors
+
+        cfg = self._load_cfg()
 
         if not Path(cfg.weights).exists():
             errors.append(f"Model weights not found: {cfg.weights}")
@@ -1134,7 +1218,7 @@ class EvaluateStep(PipelineStep):
             True if successful, False otherwise.
 
         """
-        cfg = self.config.evaluate
+        cfg = self._load_cfg()
         console.print("\n[bold cyan]Step: Evaluation[/bold cyan]")
         console.print(f"  Weights: {cfg.weights}")
         console.print(f"  Test dir: {cfg.test_dir}")
@@ -1175,7 +1259,7 @@ class EvaluateStep(PipelineStep):
 
             # Initialize predictor
             predictor = RFDETRPredictor(
-                model_size=self.config.train.model_size,
+                model_size=cfg.model_size,
                 weights_path=Path(cfg.weights),
                 class_names=class_names,
             )
@@ -1269,6 +1353,10 @@ class InferStep(PipelineStep):
 
     name = "infer"
 
+    def _load_cfg(self) -> InferStepConfig:
+        """Load the backing config from config_file."""
+        return InferStepConfig.from_yaml(Path(self.config.infer.config_file))
+
     def validate(self) -> list[str]:
         """Validate inference configuration.
 
@@ -1277,7 +1365,13 @@ class InferStep(PipelineStep):
 
         """
         errors = []
-        cfg = self.config.infer
+        pipeline_cfg = self.config.infer
+
+        if not Path(pipeline_cfg.config_file).exists():
+            errors.append(f"Infer config not found: {pipeline_cfg.config_file}")
+            return errors
+
+        cfg = self._load_cfg()
 
         if not Path(cfg.weights).exists():
             errors.append(f"Model weights not found: {cfg.weights}")
@@ -1295,7 +1389,7 @@ class InferStep(PipelineStep):
             True if successful, False otherwise.
 
         """
-        cfg = self.config.infer
+        cfg = self._load_cfg()
         console.print("\n[bold cyan]Step: Inference[/bold cyan]")
         console.print(f"  Audio dir: {cfg.audio_dir}")
         console.print(f"  Output dir: {cfg.output_dir}")
@@ -1331,7 +1425,7 @@ class InferStep(PipelineStep):
             pipeline = AudioInferencePipeline(
                 weights_path=Path(cfg.weights),
                 config_path=Path(cfg.chunking_config),
-                model_size=self.config.train.model_size,
+                model_size=cfg.model_size,
                 class_names=class_names,
                 confidence_threshold=cfg.confidence_threshold,
                 merge_gap_ms=cfg.merge_gap_ms,

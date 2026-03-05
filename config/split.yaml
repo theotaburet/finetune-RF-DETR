@@ -1,0 +1,24 @@
+# Dataset Split Configuration
+#
+# Splits a preprocessed COCO dataset (from the preprocess step) into
+# train / validation / test subsets.
+#
+# Usage:
+#   Loaded automatically by the pipeline when the split step is enabled.
+
+# Input directory containing _annotations.coco.json and images/
+input_dir: data/processed
+
+# Output directory; train/, valid/, test/ subdirs will be created here
+output_dir: data/split_dataset
+
+# Split ratios (must sum to 1.0)
+train_ratio: 0.7
+val_ratio: 0.2
+test_ratio: 0.1
+
+# Random seed for reproducible splits
+seed: 42
+
+# Stratify split by class label (attempts to balance class distribution)
+stratify: true

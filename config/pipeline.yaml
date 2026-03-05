@@ -1,13 +1,6 @@
 name: rf_detr_pipeline
 description: RF-DETR Audio Event Detection Pipeline
 
-# Download step - fetches labeled audio from EKB API
-download:
-  enabled: true
-  config_file: config/download.yaml
-  max_labels: null  # Use limit from download.yaml (1000)
-  force: false
-
 # Class names - ORDER MATTERS! Index = Class ID (0-based)
 # Example for marine acoustics:
 # class_names: ["humpback_whale", "killer_whale", "blue_whale", "dolphin", "ship_noise", "fish_chorus"]
@@ -15,64 +8,43 @@ download:
 #
 # These MUST match the classes in merging.yaml (e.g., classes.0, classes.1)
 # class_names: ["mysticeti"]
-
 class_names: []
 classes_file: null
+
+# Download step - fetches labeled audio from EKB API
+# Full config lives in config/download.yaml
+download:
+  enabled: true
+  config_file: config/download.yaml
+  max_labels: null  # Override limit.max_labels from download.yaml (null = use yaml value)
+  force: false      # Re-download even if data already exists
+
+# Preprocess step - converts audio + metadata → spectrogram chunks + COCO annotations
+# Full config lives in config/preprocess.yaml
 preprocess:
   enabled: false
-  audio_dir: /mnt/d/SoundBase/Sounds/SDK_test
-  metadata_dir: /mnt/d/SoundBase/Sounds/SDK_test
-  output_dir: data/processed
-  chunking_config: config/audio_chunking.yaml
-  extensions:
-  - .flac
-  - .wav
-  - .mp3
-  recursive: true
-  debug_visualize: false
-  max_files: null  # Process all files (set to number for testing)
+  config_file: config/preprocess.yaml
+
+# Split step - splits processed dataset into train / val / test
+# Full config lives in config/split.yaml
 split:
   enabled: false
-  input_dir: data/processed
-  output_dir: data/split_dataset
-  train_ratio: 0.7
-  val_ratio: 0.2
-  test_ratio: 0.1
-  seed: 42
-  stratify: true
+  config_file: config/split.yaml
+
+# Train step - fine-tunes RF-DETR on the split dataset
+# Full config lives in config/train.yaml
 train:
   enabled: true
-  dataset_dir: data/split_dataset
-  output_dir: output
-  model_size: base
-  pretrained_weights: null
-  epochs: 50
-  batch_size: 8
-  learning_rate: 0.0001
-  num_workers: 4
-  device: cuda
-  resume_from: null
-  early_stopping_patience: 10
-  save_every_n_epochs: 5
+  config_file: config/train.yaml
+
+# Evaluate step - runs inference on the test split and reports COCO metrics
+# Full config lives in config/evaluate.yaml
 evaluate:
   enabled: false
-  weights: output/checkpoint_best.pth
-  test_dir: data/split_dataset/test
-  output_dir: output/eval
-  confidence_threshold: 0.5
-  iou_threshold: 0.5
-  save_visualizations: true
+  config_file: config/evaluate.yaml
+
+# Infer step - runs the trained model on new audio files
+# Full config lives in config/infer.yaml
 infer:
   enabled: false
-  weights: output/checkpoint_best.pth
-  audio_dir: data/inference
-  output_dir: output/predictions
-  chunking_config: config/audio_chunking.yaml
-  extensions:
-  - .flac
-  - .wav
-  - .mp3
-  recursive: true
-  confidence_threshold: 0.5
-  merge_gap_ms: 100.0
-  output_format: json
+  config_file: config/infer.yaml
