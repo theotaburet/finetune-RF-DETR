@@ -103,3 +103,7 @@ markers = [
 ]
 real_audio_path = "data_tests/ddd4a606-c07c-4c48-879e-e93d729d79c4.flac"
 real_json_path = "data_tests/ddd4a606-c07c-4c48-879e-e93d729d79c4.json"
+filterwarnings = [
+  # rfdetr uses the deprecated Pydantic v1 .dict() method internally; suppress until upstream fixes it
+  "ignore::pydantic.warnings.PydanticDeprecatedSince20",
+]

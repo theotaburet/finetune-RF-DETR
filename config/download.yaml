@@ -1,0 +1,116 @@
+# Download Configuration for RF-DETR Training Data
+#
+# This configuration file controls how labeled audio events are downloaded
+# from the EKB API and split into train/validation/test sets.
+#
+# Usage:
+#   python run_download_data.py --config config/download.yaml
+#
+#   # With dry run to preview actions
+#   python run_download_data.py --config config/download.yaml --dry-run
+
+# API Configuration
+api:
+  # Base URL of the EKB API (required)
+  url: "http://192.168.50.103:8080/"
+
+  # Bearer token for authentication (optional - omit for unauthenticated APIs)
+  # Resolution order: this field → EKB_API_TOKEN env var → --token CLI arg
+  # To avoid storing secrets in config:
+  #   export EKB_API_TOKEN=your_token_here
+  token: null
+
+# Output Configuration
+output:
+  # Directory to save downloaded audio files and metadata (required)
+  dir: "data/downloaded"
+
+  # Subdirectories for different splits (auto-created)
+  train_dir: "train"
+  val_dir: "valid"
+  test_dir: "test"
+
+  # Metadata directory name
+  metadata_dir: "metadata"
+
+# Dataset Split Configuration
+split:
+  # Whether to create train/val/test splits (default: false = download all to single dir)
+  enabled: true
+
+  # Specific source files to use for test set (list of filenames)
+  # These exact source files will be reserved for the test set
+  # Example: ["file1.wav", "file2.wav", "file3.wav"]
+  test_source_files: [] #["sources/SanctSound_OC02/2206abf7adf77a98_OC02_05_210616165829.flac"]
+
+  # Alternative: Number of random files for test set
+  # Only used if test_source_files is empty
+  test_files: 10
+
+  # Train/validation ratio (after reserving test files)
+  # train_ratio + val_ratio must equal 1.0
+  train_ratio: 0.8
+  val_ratio: 0.2
+
+  # Random seed for reproducible splits
+  seed: 42
+
+  # Whether to stratify validation set by class
+  # When true, tries to balance classes in validation set
+  stratify_val: true
+
+  # Enrich train/val with classes found in test but missing from train/val
+  # When true, queries the API for additional labels of missing classes
+  match_test_classes: true
+
+# Filtering Options
+filters:
+  # Comma-separated list of source names (null = all sources)
+  sources: null
+
+  # Filter by label hierarchy (partial match supported)
+  label_hierarchy: "mysticeti"
+
+  # Filter by labeler name/email
+  labeler: null
+
+  # Date range filters (YYYY-MM-DD format)
+  from_date: null
+  to_date: null
+
+  # Confidence score range (0.0-1.0)
+  confidence_min: 0.20
+  confidence_max: null
+
+  # Minimum duration in milliseconds
+  min_duration: null
+
+  # Maximum frequency in Hz
+  max_frequency: null
+
+# Download Limits
+limits:
+  # Maximum number of labels to fetch from the API (null = no limit)
+  # Applied during label fetching, before grouping into sounds.
+  max_labels: 500
+
+  # Maximum number of merged sound segments to download (null = no limit).
+  # Applied after grouping overlapping events. Randomly sampled using advanced.seed.
+  # Useful for quick test runs (e.g., max_sounds: 20).
+  max_sounds: null
+
+  # Keep only sounds where at least one event has confidence >= this value (null = no filter).
+  # Applied after grouping. Complements the API-level confidence_min filter in [filters].
+  min_confidence: null
+
+  # Keep only sounds whose total duration is within these bounds in seconds (null = no filter).
+  min_duration_s: null
+  max_duration_s: null
+
+# Advanced Options
+advanced:
+  # Random seed for reproducibility
+  seed: 42
+
+  # Batch size for API requests
+  batch_size: 100

@@ -236,8 +236,8 @@ class TestPipelineDryRun:
     def test_all_steps_produce_results(self, tmp_config: PipelineConfig) -> None:
         pipeline = Pipeline(tmp_config)
         pipeline.run(run_all=True, dry_run=True)
-        assert len(pipeline.step_results) == 5
-        for step_name in ("preprocess", "split", "train", "evaluate", "infer"):
+        assert len(pipeline.step_results) == 6
+        for step_name in ("download", "preprocess", "split", "train", "evaluate", "infer"):
             assert step_name in pipeline.step_results, f"Missing results for {step_name}"
 
     def test_single_step_dry_run(self, tmp_config: PipelineConfig) -> None:

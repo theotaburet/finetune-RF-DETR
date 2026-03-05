@@ -67,6 +67,20 @@ console = Console()
 
 
 @dataclass
+class DownloadConfig:
+    """Download step configuration.
+
+    Wraps the run_download_data.DownloadConfig as a pipeline step.
+
+    """
+
+    enabled: bool = False
+    config_file: str = "config/download.yaml"
+    max_labels: int | None = None
+    force: bool = False
+
+
+@dataclass
 class PreprocessConfig:
     """Preprocessing step configuration."""
 
@@ -168,6 +182,7 @@ class PipelineConfig:
     classes_file: str | None = None
 
     # Step configurations
+    download: DownloadConfig = field(default_factory=DownloadConfig)
     preprocess: PreprocessConfig = field(default_factory=PreprocessConfig)
     split: SplitConfig = field(default_factory=SplitConfig)
     train: TrainConfig = field(default_factory=TrainConfig)
@@ -189,6 +204,8 @@ class PipelineConfig:
         config.classes_file = data.get("classes_file", config.classes_file)
 
         # Step configs
+        if "download" in data:
+            config.download = DownloadConfig(**data["download"])
         if "preprocess" in data:
             config.preprocess = PreprocessConfig(**data["preprocess"])
         if "split" in data:
@@ -209,6 +226,12 @@ class PipelineConfig:
             "description": self.description,
             "class_names": self.class_names,
             "classes_file": self.classes_file,
+            "download": {
+                "enabled": self.download.enabled,
+                "config_file": self.download.config_file,
+                "max_labels": self.download.max_labels,
+                "force": self.download.force,
+            },
             "preprocess": {
                 "enabled": self.preprocess.enabled,
                 "audio_dir": self.preprocess.audio_dir,
@@ -434,6 +457,125 @@ class PipelineStep:
 
         """
         return {"step": self.name, "action": "would execute"}
+
+
+class DownloadStep(PipelineStep):
+    """Data download step: Fetch labeled audio from EKB API."""
+
+    name = "download"
+
+    def validate(self) -> list[str]:
+        """Validate download configuration.
+
+        Returns:
+            List of validation error messages.
+
+        """
+        errors = []
+        cfg = self.config.download
+
+        if not Path(cfg.config_file).exists():
+            errors.append(f"Download config not found: {cfg.config_file}")
+
+        return errors
+
+    def run(self) -> bool:
+        """Execute the download step.
+
+        Returns:
+            True if successful, False otherwise.
+
+        """
+        cfg = self.config.download
+        console.print("\n[bold cyan]Step: Download Data[/bold cyan]")
+        console.print(f"  Config file: {cfg.config_file}")
+        if cfg.max_labels is not None:
+            console.print(f"  Max labels: {cfg.max_labels}")
+
+        if self.dry_run:
+            report = self.dry_run_report()
+            self.results = report
+            console.print("  [yellow]DRY RUN[/yellow] - would download data from EKB API")
+            for k, v in report.items():
+                console.print(f"    {k}: {v}")
+            return True
+
+        try:
+            from run_download_data import (
+                DataDownloader,
+                DownloadConfig,
+                EKBAPIClient,
+                validate_config,
+            )
+
+            # Load download config from its config file
+            download_config = DownloadConfig.from_yaml(Path(cfg.config_file))
+
+            # Apply pipeline-level override for max_labels
+            if cfg.max_labels is not None:
+                download_config.limits.max_labels = cfg.max_labels
+
+            # Validate download config
+            errors = validate_config(download_config)
+            if errors:
+                for error in errors:
+                    logger.error(f"Download config error: {error}")
+                return False
+
+            # Initialize API client
+            api_client = EKBAPIClient(
+                base_url=download_config.api.url,
+                token=download_config.api.token,
+                max_retries=download_config.advanced.max_retries,
+                retry_backoff_factor=download_config.advanced.retry_backoff_factor,
+            )
+
+            # Run download
+            downloader = DataDownloader(
+                api_client=api_client,
+                config=download_config,
+                dry_run=False,
+            )
+            results = downloader.run()
+
+            successful = sum(1 for r in results if r.success)
+            failed = len(results) - successful
+            skipped = sum(1 for r in results if r.skipped)
+
+            self.results = {
+                "total_sounds": len(results),
+                "successful": successful,
+                "failed": failed,
+                "skipped": skipped,
+                "output_dir": download_config.output.dir,
+            }
+
+            if failed > 0:
+                console.print(f"  [yellow]![/yellow] {failed} downloads failed")
+
+            console.print(
+                f"  [green]✓[/green] Downloaded {successful} sounds"
+                + (f" ({skipped} skipped, already exist)" if skipped > 0 else "")
+            )
+            return True
+
+        except Exception as e:
+            logger.error(f"Download failed: {e}")
+            import traceback
+
+            traceback.print_exc()
+            return False
+
+    def dry_run_report(self) -> dict[str, Any]:
+        """Report download plan."""
+        cfg = self.config.download
+        config_exists = Path(cfg.config_file).exists()
+        return {
+            "config_file": cfg.config_file,
+            "config_file_exists": config_exists,
+            "max_labels": cfg.max_labels,
+            "force": cfg.force,
+        }
 
 
 class PreprocessStep(PipelineStep):
@@ -1265,6 +1407,7 @@ class Pipeline:
     """Main pipeline orchestrator."""
 
     STEPS = [
+        ("download", DownloadStep),
         ("preprocess", PreprocessStep),
         ("split", SplitStep),
         ("train", TrainStep),
@@ -1284,6 +1427,7 @@ class Pipeline:
 
     def run(
         self,
+        download: bool | None = None,
         preprocess: bool | None = None,
         split: bool | None = None,
         train: bool | None = None,
@@ -1295,6 +1439,7 @@ class Pipeline:
         """Run the pipeline with selected steps.
 
         Args:
+            download: Override download step enabled.
             preprocess: Override preprocess step enabled.
             split: Override split step enabled.
             train: Override train step enabled.
@@ -1311,6 +1456,7 @@ class Pipeline:
         steps_to_run = []
 
         overrides = {
+            "download": download,
             "preprocess": preprocess,
             "split": split,
             "train": train,
@@ -1353,8 +1499,9 @@ class Pipeline:
 
         # Validate steps - but skip validation for steps whose inputs
         # will be created by earlier steps in this run
-        # Dependencies: split->preprocess, train->split, evaluate->train, infer->train
+        # Dependencies: preprocess->download, split->preprocess, train->split, evaluate->train, infer->train
         step_dependencies = {
+            "preprocess": ["download"],  # preprocess can use download output
             "split": ["preprocess"],  # split needs preprocess output
             "train": ["split"],  # train needs split output
             "evaluate": ["train"],  # evaluate needs trained model
@@ -1406,7 +1553,8 @@ class Pipeline:
 
             try:
                 step_success = step.run()
-                self.step_results[step_name] = step.results
+                if step_success:
+                    self.step_results[step_name] = step.results
                 progress_manager.complete_step(step_name, success=step_success)
 
                 if not step_success:
@@ -1503,6 +1651,11 @@ def parse_args() -> argparse.Namespace:
         help="Run all pipeline steps",
     )
     step_group.add_argument(
+        "--download",
+        action="store_true",
+        help="Run data download step",
+    )
+    step_group.add_argument(
         "--preprocess",
         action="store_true",
         help="Run preprocessing step",
@@ -1530,6 +1683,11 @@ def parse_args() -> argparse.Namespace:
 
     # Skip toggles
     skip_group = parser.add_argument_group("Skip Steps")
+    skip_group.add_argument(
+        "--no-download",
+        action="store_true",
+        help="Skip download step",
+    )
     skip_group.add_argument(
         "--no-preprocess",
         action="store_true",
@@ -1592,8 +1750,9 @@ def main() -> int:
     # Determine step overrides
     # If specific steps are requested, use those
     # If --no-X is specified, disable that step
-    any_step_requested = args.preprocess or args.split or args.train or args.evaluate or args.infer
+    any_step_requested = args.download or args.preprocess or args.split or args.train or args.evaluate or args.infer
 
+    download = None
     preprocess = None
     split = None
     train = None
@@ -1601,6 +1760,7 @@ def main() -> int:
     infer = None
 
     if any_step_requested:
+        download = args.download
         preprocess = args.preprocess
         split = args.split
         train = args.train
@@ -1608,6 +1768,8 @@ def main() -> int:
         infer = args.infer
     else:
         # Use config defaults, but apply --no-X overrides
+        if args.no_download:
+            download = False
         if args.no_preprocess:
             preprocess = False
         if args.no_split:
@@ -1618,6 +1780,7 @@ def main() -> int:
     # Run pipeline
     pipeline = Pipeline(config)
     success = pipeline.run(
+        download=download,
         preprocess=preprocess,
         split=split,
         train=train,
