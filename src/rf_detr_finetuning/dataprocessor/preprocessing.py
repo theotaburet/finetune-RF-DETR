@@ -100,6 +100,10 @@ class PreprocessingConfig:
         dynamic_range: Dynamic range configuration
         detrend: Whether to remove DC offset
         preemphasis: Pre-emphasis coefficient (0 = disabled)
+        spectral_whitening: Subtract per-frequency median across time axis.
+            Removes stationary noise floor and highlights transient events.
+        mad_normalization: Divide by per-frequency MAD (median absolute deviation).
+            Makes model invariant to recording gain differences.
 
     """
 
@@ -107,6 +111,8 @@ class PreprocessingConfig:
     dynamic_range: DynamicRangeConfig = field(default_factory=DynamicRangeConfig)
     detrend: bool = True
     preemphasis: float = 0.0
+    spectral_whitening: bool = False
+    mad_normalization: bool = False
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> PreprocessingConfig:
@@ -119,6 +125,8 @@ class PreprocessingConfig:
             dynamic_range=DynamicRangeConfig.from_dict(dr_data) if dr_data else DynamicRangeConfig(),
             detrend=data.get("detrend", True),
             preemphasis=float(data.get("preemphasis", 0.0)),
+            spectral_whitening=data.get("spectral_whitening", False),
+            mad_normalization=data.get("mad_normalization", False),
         )
 
     @classmethod
@@ -148,6 +156,8 @@ class PreprocessingConfig:
             },
             "detrend": self.detrend,
             "preemphasis": self.preemphasis,
+            "spectral_whitening": self.spectral_whitening,
+            "mad_normalization": self.mad_normalization,
         }
 
 
@@ -306,12 +316,16 @@ def apply_dynamic_range_compression(
 ) -> np.ndarray:
     """Apply dynamic range compression to spectrogram.
 
+    Expects spectrogram in dB scale (from compute_mel_spectrogram_db).
+    Applies percentile clipping to remove outlier peaks, then limits
+    dynamic range to top_db below the maximum value.
+
     Args:
-        spectrogram: Spectrogram array (H, W), expected in dB scale
+        spectrogram: Spectrogram array (H, W) in dB scale
         config: Dynamic range configuration
 
     Returns:
-        Compressed spectrogram
+        Compressed spectrogram in dB scale
 
     """
     if config is None:

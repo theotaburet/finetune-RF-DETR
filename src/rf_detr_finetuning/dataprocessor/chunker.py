@@ -26,7 +26,7 @@ from rf_detr_finetuning.dataprocessor.chunking import (
     compute_chunk_boundaries,
     extract_audio_chunk,
 )
-from rf_detr_finetuning.dataprocessor.features import compute_mel_spectrogram, flip_spectrogram
+from rf_detr_finetuning.dataprocessor.features import compute_mel_spectrogram_db, flip_spectrogram
 from rf_detr_finetuning.dataprocessor.io import load_audio_file
 from rf_detr_finetuning.dataprocessor.normalization import resize_spectrogram, spectrogram_to_image_array
 from rf_detr_finetuning.dataprocessor.preprocessing import (
@@ -101,21 +101,26 @@ class AudioChunker:
         audio: np.ndarray,
         sample_rate: int,
     ) -> np.ndarray:
-        """Compute spectrogram for audio chunk.
+        """Compute mel spectrogram in dB scale with optional spectral normalization.
+
+        Pipeline:
+        1. Mel spectrogram (power=2.0) -> dB conversion (10*log10)
+        2. Optional: per-frequency median subtraction (spectral whitening)
+        3. Optional: robust std (MAD) normalization
 
         Args:
             audio: Audio array (1D)
             sample_rate: Sample rate
 
         Returns:
-            Spectrogram as numpy array (H, W)
+            Spectrogram as numpy array (H, W) in dB scale
 
         """
         n_fft = self.fft_config.get_n_fft(sample_rate)
         hop_length = self.fft_config.get_hop_length(sample_rate)
         fmax = self._resolve_fmax(sample_rate)
 
-        spec = compute_mel_spectrogram(
+        spec = compute_mel_spectrogram_db(
             audio=audio,
             sample_rate=sample_rate,
             n_mels=self.fft_config.n_mels,
@@ -123,7 +128,19 @@ class AudioChunker:
             hop_length=hop_length,
             f_min=self.fmin,
             f_max=fmax,
+            min_db=-80.0,
         )
+
+        # Per-frequency median subtraction (spectral whitening)
+        if self.preprocessing_config is not None and self.preprocessing_config.spectral_whitening:
+            median_profile = np.median(spec, axis=1, keepdims=True)
+            spec = spec - median_profile
+
+        # Robust std (MAD) normalization
+        if self.preprocessing_config is not None and self.preprocessing_config.mad_normalization:
+            mad = np.median(np.abs(spec - np.median(spec, axis=1, keepdims=True)), axis=1, keepdims=True)
+            mad = np.maximum(mad, 1e-6)
+            spec = spec / mad
 
         return spec
 

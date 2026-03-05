@@ -75,6 +75,18 @@ preprocessing:
   # Pre-emphasis coefficient (0 = disabled, 0.97 = typical for speech)
   preemphasis: 0.97
 
+  # Spectral whitening: subtract per-frequency-band median across time axis.
+  # Removes stationary noise floor (engine hum, ambient noise) and
+  # highlights transient events - exactly what a detector needs.
+  # Applied after dB conversion, before dynamic range compression.
+  spectral_whitening: true
+
+  # MAD normalization: divide by per-frequency-band MAD (median absolute deviation).
+  # Makes the model invariant to recording gain differences that AGC
+  # doesn't fully equalize. Applied after spectral whitening.
+  # Set to false for initial experiments; enable if gain variance is a problem.
+  mad_normalization: false
+
   # Automatic Gain Control - normalizes audio loudness
   agc:
     enabled: true
