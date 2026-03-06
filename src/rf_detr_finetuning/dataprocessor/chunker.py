@@ -319,17 +319,51 @@ class AudioChunker:
 
         return self.chunk_audio(audio, sample_rate, events, source_uuid)
 
+    def process_file(
+        self,
+        audio_path: Path | str,
+        events: list[dict[str, Any]] | None = None,
+    ) -> list[AudioChunk]:
+        """Process an audio file into chunks (inference-oriented convenience method).
+
+        Unlike chunk_audio_file, this method does not read metadata sidecar
+        files.  It accepts an optional list of events directly.
+
+        Args:
+            audio_path: Path to audio file.
+            events: Optional pre-built event list. Defaults to empty (no annotations).
+
+        Returns:
+            List of AudioChunk objects.
+
+        """
+        audio_path = Path(audio_path)
+        audio, sample_rate = load_audio_file(audio_path)
+
+        # Pad short audio (same logic as chunk_audio_file)
+        n_fft = self.fft_config.get_n_fft(sample_rate)
+        if len(audio) < n_fft:
+            padding_needed = n_fft - len(audio)
+            audio = np.pad(audio, (0, padding_needed), mode="constant", constant_values=0)
+
+        # Apply preprocessing to full audio
+        if self.preprocessing_config is not None:
+            audio, _meta = preprocess_audio(audio, sample_rate, self.preprocessing_config)
+
+        return self.chunk_audio(audio, sample_rate, events or [], source_uuid=audio_path.stem)
+
 
 def load_chunking_config_from_yaml(
     yaml_path: Path | str,
-) -> tuple[TimeBasedFFTConfig, ChunkConfig, PreprocessingConfig | None]:
+) -> tuple[TimeBasedFFTConfig, ChunkConfig, PreprocessingConfig | None, dict]:
     """Load chunking configuration from YAML file.
 
     Args:
         yaml_path: Path to YAML configuration file
 
     Returns:
-        Tuple of (TimeBasedFFTConfig, ChunkConfig, PreprocessingConfig or None)
+        Tuple of (TimeBasedFFTConfig, ChunkConfig, PreprocessingConfig or None,
+        spectrogram_config dict with keys 'freq_scale', 'fmin', 'fmax')
 
     """
     import yaml
@@ -340,6 +374,7 @@ def load_chunking_config_from_yaml(
     fft_section = config.get("fft", {})
     chunk_section = config.get("chunking", {})
     preprocessing_section = config.get("preprocessing", {})
+    spectrogram_section = config.get("spectrogram", {})
 
     fft_config = TimeBasedFFTConfig(
         fft_ms=fft_section.get("fft_ms", 25.0),
@@ -382,4 +417,11 @@ def load_chunking_config_from_yaml(
     if preprocessing_section:
         preprocessing_config = PreprocessingConfig.from_dict(preprocessing_section)
 
-    return fft_config, chunk_config, preprocessing_config
+    # Load spectrogram config (freq_scale, fmin, fmax)
+    spectrogram_config = {
+        "freq_scale": spectrogram_section.get("freq_scale", "mel"),
+        "fmin": spectrogram_section.get("fmin", 0.0),
+        "fmax": spectrogram_section.get("fmax", None),
+    }
+
+    return fft_config, chunk_config, preprocessing_config, spectrogram_config

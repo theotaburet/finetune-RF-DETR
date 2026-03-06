@@ -6,7 +6,7 @@
 #   Loaded automatically by the pipeline when the evaluate step is enabled.
 
 # Path to the model checkpoint to evaluate
-weights: output/checkpoint_best.pth
+weights: output/checkpoint_best_total.pth
 
 # Directory containing test images and _annotations.coco.json
 test_dir: data/split_dataset/test

@@ -457,11 +457,14 @@ def convert_audio_to_coco(
                         img_filename = f"{chunk_id}.png"
                         img_path = split_dir / img_filename
 
-                        # Convert to PIL Image and save
+                        # Convert to PIL Image and save (always RGB for consistency)
+                        from rf_detr_finetuning.dataprocessor import grayscale_to_rgb
+
                         if chunk.spectrogram.ndim == 2:
-                            img = Image.fromarray(chunk.spectrogram)
+                            rgb = grayscale_to_rgb(chunk.spectrogram)
+                            img = Image.fromarray(rgb, mode="RGB")
                         else:
-                            # 3-channel (RGB) spectrogram
+                            # Already 3-channel (RGB) spectrogram
                             img = Image.fromarray(chunk.spectrogram, mode="RGB")
 
                         img.save(img_path)

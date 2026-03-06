@@ -183,14 +183,10 @@ class AudioPredictor:
         """
         from rf_detr_finetuning.dataprocessor import (
             grayscale_to_rgb,
-            normalize_to_range,
         )
 
-        # Normalize to 0-255
-        normalized = normalize_to_range(spectrogram, 0, 255)
-
-        # Convert to RGB
-        rgb = grayscale_to_rgb(normalized)
+        # Convert to RGB (already uint8 0-255 from chunker)
+        rgb = grayscale_to_rgb(spectrogram)
 
         return rgb
 
@@ -253,12 +249,15 @@ class AudioPredictor:
             load_chunking_config_from_yaml,
         )
 
-        fft_config, chunk_config, preproc_config = load_chunking_config_from_yaml(chunking_config_path)
+        fft_config, chunk_config, preproc_config, spec_config = load_chunking_config_from_yaml(chunking_config_path)
 
         chunker = AudioChunker(
             fft_config=fft_config,
             chunk_config=chunk_config,
             preprocessing_config=preproc_config,
+            freq_scale=spec_config["freq_scale"],
+            fmin=spec_config["fmin"],
+            fmax=spec_config["fmax"],
         )
 
         return cls(predictor=predictor, chunker=chunker)

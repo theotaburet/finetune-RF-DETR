@@ -82,6 +82,7 @@ def compute_mel_spectrogram(
             f_max=f_max,
             power=power,
             device=device,
+            log_scale=False,  # Return raw power spectrum; dB conversion is handled by compute_mel_spectrogram_db()
         )
 
         # Convert to numpy

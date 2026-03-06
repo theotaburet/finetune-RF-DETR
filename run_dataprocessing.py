@@ -206,14 +206,14 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def load_config(args: argparse.Namespace) -> tuple[Any, Any, Any]:
+def load_config(args: argparse.Namespace) -> tuple[Any, Any, Any, dict]:
     """Load configuration from file or arguments.
 
     Args:
         args: Parsed command line arguments.
 
     Returns:
-        Tuple of (fft_config, chunk_config, preprocessing_config).
+        Tuple of (fft_config, chunk_config, preprocessing_config, spectrogram_config).
 
     """
     from rf_detr_finetuning.dataprocessor import (
@@ -256,7 +256,7 @@ def load_config(args: argparse.Namespace) -> tuple[Any, Any, Any]:
         preemphasis_coef=args.preemphasis if args.preemphasis > 0 else None,
     )
 
-    return fft_config, chunk_config, preproc_config
+    return fft_config, chunk_config, preproc_config, {"freq_scale": "mel", "fmin": 0.0, "fmax": None}
 
 
 def find_audio_metadata_pairs(
@@ -374,13 +374,10 @@ def save_chunk_as_image(
         output_path: Output file path.
 
     """
-    from rf_detr_finetuning.dataprocessor import grayscale_to_rgb, normalize_to_range
+    from rf_detr_finetuning.dataprocessor import grayscale_to_rgb
 
-    # Normalize to 0-255
-    normalized = normalize_to_range(spectrogram, 0, 255).astype(np.uint8)
-
-    # Convert to RGB
-    rgb = grayscale_to_rgb(normalized)
+    # Convert to RGB (already uint8 0-255 from chunker)
+    rgb = grayscale_to_rgb(spectrogram)
 
     # Save as PNG
     img = Image.fromarray(rgb)
@@ -476,7 +473,7 @@ def main() -> int:
         return 1
 
     # Load configuration
-    fft_config, chunk_config, preproc_config = load_config(args)
+    fft_config, chunk_config, preproc_config, spec_config = load_config(args)
 
     console.print(
         f"[cyan]FFT config:[/cyan] hop={fft_config.hop_ms}ms, fft={fft_config.fft_ms}ms, mels={fft_config.n_mels}"
@@ -520,6 +517,9 @@ def main() -> int:
         fft_config=fft_config,
         chunk_config=chunk_config,
         preprocessing_config=preproc_config,
+        freq_scale=spec_config["freq_scale"],
+        fmin=spec_config["fmin"],
+        fmax=spec_config["fmax"],
     )
 
     # Process all files

@@ -255,7 +255,7 @@ def chunk_audio(
     # Load config from YAML or use CLI arguments
     if config_file:
         console.print(f"[cyan]Loading config from:[/cyan] {config_file}")
-        fft_config, chunk_config, preprocessing_config = load_chunking_config_from_yaml(config_file)
+        fft_config, chunk_config, preprocessing_config, spec_config = load_chunking_config_from_yaml(config_file)
     else:
         fft_config = TimeBasedFFTConfig(
             fft_ms=fft_ms,
@@ -272,11 +272,15 @@ def chunk_audio(
             min_overlap_with_event_ratio=min_overlap_ratio,
         )
         preprocessing_config = None  # No preprocessing when using CLI args
+        spec_config = {"freq_scale": "mel", "fmin": 0.0, "fmax": None}
 
     chunker = AudioChunker(
         fft_config=fft_config,
         chunk_config=chunk_config,
         preprocessing_config=preprocessing_config,
+        freq_scale=spec_config["freq_scale"],
+        fmin=spec_config["fmin"],
+        fmax=spec_config["fmax"],
     )
 
     # Find audio files

@@ -347,6 +347,10 @@ class AudioInferencePipeline:
         self._init_predictor()
         self._init_postprocessor()
 
+        # Cache for last processed file's chunks+detections (avoids re-processing for visualization)
+        self._last_audio_path: Path | None = None
+        self._last_chunks_data: list[tuple[np.ndarray, list, dict]] = []
+
     def _init_chunker(self) -> None:
         """Initialize audio chunker from config."""
         from rf_detr_finetuning.dataprocessor import (
@@ -354,12 +358,17 @@ class AudioInferencePipeline:
             load_chunking_config_from_yaml,
         )
 
-        self.fft_config, self.chunk_config, self.preproc_config = load_chunking_config_from_yaml(self.config_path)
+        self.fft_config, self.chunk_config, self.preproc_config, self.spec_config = load_chunking_config_from_yaml(
+            self.config_path
+        )
 
         self.chunker = AudioChunker(
             fft_config=self.fft_config,
             chunk_config=self.chunk_config,
             preprocessing_config=self.preproc_config,
+            freq_scale=self.spec_config["freq_scale"],
+            fmin=self.spec_config["fmin"],
+            fmax=self.spec_config["fmax"],
         )
 
         logger.debug(f"Chunker initialized: window={self.chunk_config.window_duration_ms}ms")
@@ -420,7 +429,7 @@ class AudioInferencePipeline:
             AudioInferenceResult with detected events.
 
         """
-        from rf_detr_finetuning.dataprocessor import grayscale_to_rgb, load_audio_file, normalize_to_range
+        from rf_detr_finetuning.dataprocessor import grayscale_to_rgb, load_audio_file
         from rf_detr_finetuning.predictor import WindowPrediction
 
         # Load audio
@@ -436,10 +445,10 @@ class AudioInferencePipeline:
 
         # Run inference on each chunk
         window_predictions = []
+        chunks_data = []
         for chunk in chunks:
-            # Convert spectrogram to RGB image
-            normalized = normalize_to_range(chunk.spectrogram, 0, 255)
-            rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+            # Convert spectrogram to RGB image (already uint8 0-255 from chunker)
+            rgb = grayscale_to_rgb(chunk.spectrogram)
 
             # Run detection
             result = self.predictor.predict(rgb, self.confidence_threshold)
@@ -454,6 +463,24 @@ class AudioInferencePipeline:
                 is_padded=chunk.is_padded,
             )
             window_predictions.append(wp)
+
+            # Cache chunk data for visualization reuse
+            chunks_data.append(
+                (
+                    chunk.spectrogram,
+                    result.detections,
+                    {
+                        "chunk_index": chunk.chunk_index,
+                        "start_ms": chunk.start_ms,
+                        "end_ms": chunk.end_ms,
+                        "is_padded": chunk.is_padded,
+                    },
+                )
+            )
+
+        # Store cache so get_chunks_with_detections() can reuse without re-processing
+        self._last_audio_path = audio_path
+        self._last_chunks_data = chunks_data
 
         # Merge window predictions into events
         from rf_detr_finetuning.predictor.audio import AudioPredictionResult
@@ -498,6 +525,9 @@ class AudioInferencePipeline:
     ) -> list[tuple[np.ndarray, list, dict]]:
         """Get chunks with their detections for visualization.
 
+        Returns cached results if the audio file was already processed by
+        ``process_audio``, avoiding redundant chunking and inference.
+
         Args:
             audio_path: Path to audio file.
 
@@ -505,16 +535,19 @@ class AudioInferencePipeline:
             List of (spectrogram, detections, metadata) tuples.
 
         """
-        from rf_detr_finetuning.dataprocessor import grayscale_to_rgb, normalize_to_range
+        # Return cached results when available for this file
+        if self._last_audio_path is not None and self._last_audio_path == audio_path and self._last_chunks_data:
+            return self._last_chunks_data
 
-        # Load and chunk
+        # Fallback: process the file from scratch (e.g. called standalone)
+        from rf_detr_finetuning.dataprocessor import grayscale_to_rgb
+
         chunks = self.chunker.process_file(str(audio_path), events=[])
 
         results = []
         for chunk in chunks:
-            # Convert and detect
-            normalized = normalize_to_range(chunk.spectrogram, 0, 255)
-            rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+            # Already uint8 0-255 from chunker
+            rgb = grayscale_to_rgb(chunk.spectrogram)
             result = self.predictor.predict(rgb, self.confidence_threshold)
 
             metadata = {
@@ -550,7 +583,7 @@ def save_visualizations(
         logger.warning("supervision not installed, skipping visualizations")
         return
 
-    from rf_detr_finetuning.dataprocessor import grayscale_to_rgb, normalize_to_range
+    from rf_detr_finetuning.dataprocessor import grayscale_to_rgb
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -563,9 +596,8 @@ def save_visualizations(
             if not detections:
                 continue
 
-            # Convert to image
-            normalized = normalize_to_range(spec, 0, 255).astype(np.uint8)
-            rgb = grayscale_to_rgb(normalized)
+            # Convert to image (already uint8 0-255 from chunker)
+            rgb = grayscale_to_rgb(spec)
 
             # Draw detections
             xyxy = np.array([[d.x1, d.y1, d.x2, d.y2] for d in detections])

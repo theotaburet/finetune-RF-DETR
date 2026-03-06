@@ -6,7 +6,7 @@
 #   Loaded automatically by the pipeline when the infer step is enabled.
 
 # Path to the trained model checkpoint
-weights: output/checkpoint_best.pth
+weights: output/checkpoint_best_total.pth
 
 # Directory containing audio files to run inference on
 audio_dir: data/inference
@@ -35,3 +35,9 @@ output_format: json
 # RF-DETR model size used during training (must match the checkpoint)
 # Options: base, large
 model_size: base
+
+# Save annotated spectrogram images showing detections on each chunk
+save_visualizations: true
+
+# Directory for visualization output images
+viz_dir: output/predictions/viz

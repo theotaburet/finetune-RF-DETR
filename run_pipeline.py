@@ -33,9 +33,12 @@ import sys
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import yaml
+
+if TYPE_CHECKING:
+    from rf_detr_finetuning.predictor import RFDETRPredictor
 from rich.console import Console
 from rich.logging import RichHandler
 from rich.panel import Panel
@@ -204,7 +207,7 @@ class TrainStepConfig:
 class EvaluateStepConfig:
     """Full evaluation configuration loaded from config/evaluate.yaml."""
 
-    weights: str = "output/checkpoint_best.pth"
+    weights: str = "output/checkpoint_best_total.pth"
     test_dir: str = "data/split_dataset/test"
     output_dir: str = "output/eval"
     confidence_threshold: float = 0.5
@@ -224,7 +227,7 @@ class EvaluateStepConfig:
 class InferStepConfig:
     """Full inference configuration loaded from config/infer.yaml."""
 
-    weights: str = "output/checkpoint_best.pth"
+    weights: str = "output/checkpoint_best_total.pth"
     audio_dir: str = "data/inference"
     output_dir: str = "output/predictions"
     chunking_config: str = "config/audio_chunking.yaml"
@@ -234,6 +237,8 @@ class InferStepConfig:
     merge_gap_ms: float = 100.0
     output_format: str = "json"
     model_size: str = "base"
+    save_visualizations: bool = True
+    viz_dir: str = "output/predictions/viz"
 
     @classmethod
     def from_yaml(cls, path: Path) -> InferStepConfig:
@@ -673,23 +678,26 @@ class PreprocessStep(PipelineStep):
         console.print(f"  Output dir: {cfg.output_dir}")
 
         try:
-            import numpy as np
             from PIL import Image
 
             from rf_detr_finetuning.dataprocessor import (
                 AudioChunker,
                 grayscale_to_rgb,
                 load_chunking_config_from_yaml,
-                normalize_to_range,
             )
 
             # Load chunker config
-            fft_config, chunk_config, preproc_config = load_chunking_config_from_yaml(Path(cfg.chunking_config))
+            fft_config, chunk_config, preproc_config, spec_config = load_chunking_config_from_yaml(
+                Path(cfg.chunking_config)
+            )
 
             chunker = AudioChunker(
                 fft_config=fft_config,
                 chunk_config=chunk_config,
                 preprocessing_config=preproc_config,
+                freq_scale=spec_config["freq_scale"],
+                fmin=spec_config["fmin"],
+                fmax=spec_config["fmax"],
             )
 
             # Find audio-metadata pairs
@@ -759,15 +767,14 @@ class PreprocessStep(PipelineStep):
                         continue
 
                     for chunk in chunks:
-                        # Save image
-                        normalized = normalize_to_range(chunk.spectrogram, 0, 255)
-                        rgb = grayscale_to_rgb(normalized.astype(np.uint8))
+                        # Save image (spectrogram is already uint8 from AudioChunker)
+                        rgb = grayscale_to_rgb(chunk.spectrogram)
                         img_name = f"{audio_path.stem}_chunk{chunk.chunk_index:04d}.png"
                         img_path = output_dir / "images" / img_name
                         Image.fromarray(rgb).save(img_path)
 
                         # Add image entry
-                        h, w = chunk.spectrogram.shape
+                        h, w = chunk.spectrogram.shape[:2]
                         all_images.append(
                             {
                                 "id": image_id,
@@ -1337,6 +1344,17 @@ class EvaluateStep(PipelineStep):
             with open(output_dir / "eval_results.json", "w") as f:
                 json.dump(self.results, f, indent=2)
 
+            # Save visualizations if enabled
+            if cfg.save_visualizations:
+                self._save_eval_visualizations(
+                    predictor=predictor,
+                    coco_data=coco_data,
+                    test_dir=test_dir,
+                    output_dir=output_dir,
+                    confidence_threshold=cfg.confidence_threshold,
+                    img_to_anns=img_to_anns,
+                )
+
             console.print(f"  [green]✓[/green] mAP={metrics.get('mAP', 0):.3f}, mAP50={metrics.get('mAP50', 0):.3f}")
             return True
 
@@ -1346,6 +1364,103 @@ class EvaluateStep(PipelineStep):
 
             traceback.print_exc()
             return False
+
+    def _save_eval_visualizations(
+        self,
+        predictor: RFDETRPredictor,
+        coco_data: dict,
+        test_dir: Path,
+        output_dir: Path,
+        confidence_threshold: float,
+        img_to_anns: dict,
+    ) -> None:
+        """Save annotated images showing predictions and ground truth.
+
+        Args:
+            predictor: RFDETRPredictor instance.
+            coco_data: COCO annotations dict.
+            test_dir: Directory containing test images.
+            output_dir: Directory to save visualizations.
+            confidence_threshold: Confidence threshold for detections.
+            img_to_anns: Mapping from image_id to annotations.
+
+        """
+        try:
+            import supervision as sv
+        except ImportError:
+            logger.warning("supervision not installed, skipping eval visualizations")
+            return
+
+        import numpy as np
+        from PIL import Image
+
+        viz_dir = output_dir / "visualizations"
+        viz_dir.mkdir(parents=True, exist_ok=True)
+
+        sorted_categories = sorted(coco_data["categories"], key=lambda x: x["id"])
+        id_to_name = {c["id"]: c["name"] for c in sorted_categories}
+        idx_to_category_id = {idx: c["id"] for idx, c in enumerate(sorted_categories)}
+
+        console.print(f"  Saving eval visualizations to {viz_dir}...")
+
+        for img_info in coco_data["images"]:
+            img_path = test_dir / img_info["file_name"]
+            if not img_path.exists():
+                continue
+
+            img = np.array(Image.open(img_path).convert("RGB"))
+            result = predictor.predict(img, confidence_threshold)
+
+            # Build prediction detections
+            pred_labels: list[str] = []
+            if result.detections:
+                pred_xyxy = np.array([[d.x1, d.y1, d.x2, d.y2] for d in result.detections])
+                pred_conf = np.array([d.score for d in result.detections])
+                pred_cls = np.array([d.class_id for d in result.detections])
+                for d in result.detections:
+                    cat_id = idx_to_category_id.get(d.class_id, d.class_id)
+                    name = id_to_name.get(cat_id, str(cat_id))
+                    pred_labels.append(f"P: {name} {d.score:.2f}")
+                pred_dets = sv.Detections(xyxy=pred_xyxy, confidence=pred_conf, class_id=pred_cls)
+            else:
+                pred_dets = None
+
+            # Build ground truth detections
+            gt_anns = img_to_anns.get(img_info["id"], [])
+            gt_labels: list[str] = []
+            if gt_anns:
+                gt_xyxy = []
+                gt_labels = []
+                for ann in gt_anns:
+                    x, y, w, h = ann["bbox"]
+                    gt_xyxy.append([x, y, x + w, y + h])
+                    name = id_to_name.get(ann["category_id"], str(ann["category_id"]))
+                    gt_labels.append(f"GT: {name}")
+                gt_xyxy = np.array(gt_xyxy)
+                gt_cls = np.array([ann["category_id"] for ann in gt_anns])
+                gt_dets = sv.Detections(xyxy=gt_xyxy, class_id=gt_cls)
+            else:
+                gt_dets = None
+
+            annotated = img.copy()
+
+            # Draw ground truth in green
+            if gt_dets is not None:
+                gt_box = sv.BoxAnnotator(thickness=2, color=sv.Color.GREEN)
+                gt_label = sv.LabelAnnotator(text_scale=0.4, text_thickness=1, color=sv.Color.GREEN)
+                annotated = gt_box.annotate(annotated, gt_dets)
+                annotated = gt_label.annotate(annotated, gt_dets, gt_labels)
+
+            # Draw predictions in red
+            if pred_dets is not None:
+                pred_box = sv.BoxAnnotator(thickness=2, color=sv.Color.RED)
+                pred_label = sv.LabelAnnotator(text_scale=0.4, text_thickness=1, color=sv.Color.RED)
+                annotated = pred_box.annotate(annotated, pred_dets)
+                annotated = pred_label.annotate(annotated, pred_dets, pred_labels)
+
+            Image.fromarray(annotated).save(viz_dir / f"{img_path.stem}_eval.png")
+
+        console.print(f"  [green]✓[/green] Eval visualizations saved to {viz_dir}")
 
 
 class InferStep(PipelineStep):
@@ -1474,6 +1589,16 @@ class InferStep(PipelineStep):
                     progress.advance(task)
 
             total_events = sum(len(r.events) for r in all_results)
+
+            # Save visualizations if enabled
+            if cfg.save_visualizations:
+                from run_inference_audio import save_visualizations as _save_viz
+
+                viz_dir = Path(cfg.viz_dir)
+                console.print(f"  Saving visualizations to {viz_dir}...")
+                for audio_path in audio_files:
+                    _save_viz(pipeline, audio_path, viz_dir, save_chunks=True)
+                console.print(f"  [green]✓[/green] Visualizations saved to {viz_dir}")
 
             self.results = {
                 "num_files": len(all_results),

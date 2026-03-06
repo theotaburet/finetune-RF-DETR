@@ -226,17 +226,21 @@ def generate_baseline_from_audio(
 
     # Load config
     if config_path and config_path.exists():
-        fft_config, chunk_config, preprocessing_config = load_chunking_config_from_yaml(config_path)
+        fft_config, chunk_config, preprocessing_config, spec_config = load_chunking_config_from_yaml(config_path)
     else:
         fft_config = TimeBasedFFTConfig()
         chunk_config = ChunkConfig()
         preprocessing_config = None
+        spec_config = {"freq_scale": "mel", "fmin": 0.0, "fmax": None}
 
     # Create chunker and process
     chunker = AudioChunker(
         fft_config=fft_config,
         chunk_config=chunk_config,
         preprocessing_config=preprocessing_config,
+        freq_scale=spec_config["freq_scale"],
+        fmin=spec_config["fmin"],
+        fmax=spec_config["fmax"],
     )
 
     chunks = chunker.chunk_audio_file(audio_path, metadata_path)
